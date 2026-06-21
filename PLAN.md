@@ -3,7 +3,8 @@
 A personal investment tracker built to **learn Rust** on the backend, designed to be
 productized later. This file is the source of truth for scope and direction — edit it freely.
 
-> Status: **M1 complete** (backend skeleton + DB). Paused for plan review before M2.
+> Status: **M1 complete** (backend skeleton + DB). Plan review done — **M2 (Plaid
+> integration) is the active next step.** See §7 for the decisions that came out of review.
 
 ---
 
@@ -55,7 +56,9 @@ React frontend ──HTTP/JSON──► Axum backend ──SQLx──► Postgre
 - **Every user-owned table carries `user_id` now**, even though v1 is single-user — so going
   multi-user later is an auth change, not a schema rewrite.
 - **`tax_lots` are derived, not from Plaid.** Plaid doesn't provide per-purchase tax lots, so we
-  reconstruct them from the transaction feed (FIFO by default). This powers holding-period and
+  reconstruct them from the transaction feed. Lots are depleted **FIFO** when replaying
+  *historical* sells (to match broker records), but each **open** lot is **individually
+  selectable** for harvesting/sell simulation (see §4). This powers holding-period and
   gain/loss math.
 
 ---
@@ -68,13 +71,14 @@ Pure Rust, heavily unit-tested:
 - **Federal rates:** LT brackets 0/15/20% by filing status + income; ST at ordinary rate;
   + NIIT 3.8%. Brackets stored as year-keyed data so they're easy to update annually.
 - **Tax-loss harvesting:** flag unrealized losses; detect **wash sales** (same security bought
-  within ±30 days)
-- **"Good time to sell" signal:** for each lot, compare after-tax proceeds *now* vs. *after it
-  crosses the 1-year long-term boundary* — surface lots about to become long-term (selling now
-  wastes the lower rate) or gains clearing a threshold
+  within ±30 days). Operates on **user-selected specific lots** among the open lots for a
+  security (FIFO is only the historical-reconstruction default — see §3, §7).
+- **"Good time to sell" signal:** for each selected lot, compare after-tax proceeds *now* vs.
+  *after it crosses the 1-year long-term boundary*, using **end-of-day** prices — surface lots
+  about to become long-term (selling now wastes the lower rate) or gains clearing a threshold
 
-> Scope: **federal only, no state tax in v1**. This is decision-support, **not tax advice** —
-> a UI disclaimer should be added.
+> Scope decision: **federal only, no state tax in v1** (state tax is a future layer). This is
+> decision-support, **not tax advice** — a UI disclaimer should be added.
 
 ---
 
@@ -105,20 +109,32 @@ End-to-end checks, not just "it compiles":
 
 ---
 
-## 7. Assumptions & open questions
+## 7. Decisions & assumptions
+
+Decisions from the post-M1 review (these resolve the prior open questions):
+
+1. **Cost basis — two layers.** Historical realized sells are reconstructed by depleting lots
+   **FIFO** (Plaid's feed doesn't say which lots the broker actually used, so FIFO is the
+   matching anchor). For harvesting and sell *simulation*, the user picks **specific open
+   lots** to sell, and we compute per-lot gain/loss, holding period, and after-tax proceeds.
+   The existing `tax_lots` schema (`remaining_quantity`, `cost_basis_per_share`, `open_date`,
+   `status`) already supports this — no migration needed.
+2. **Tax scope — federal only** in v1 (LT 0/15/20% + NIIT 3.8%). State capital-gains tax is a
+   future layer, not in scope now.
+3. **Prices — end-of-day** from Plaid. Day-granularity is sufficient for LT/ST boundary
+   alerts; intraday is a later optional add and avoids a second market-data integration now.
+4. **Milestones — unchanged** (M2 → M7 as in §5).
 
 Baked-in assumptions:
 - Plaid Investments covers **US + Canada** institutions only
-- Plaid prices are **end-of-day**, not real-time (intraday market-data API can be added later)
-- Cost-basis method defaults to **FIFO** (configurable later)
+- Plaid prices are **end-of-day**, not real-time
 - Need a free **Plaid sandbox** account (client_id + secret) before testing M2; SMTP creds
   (Mailtrap) before M5
 
-Open questions for review:
-1. **FIFO** as default cost-basis method (vs specific-lot / average) — OK to start?
-2. **Federal-only tax** in v1 — or include your state's capital-gains tax sooner?
-3. **End-of-day prices** — sufficient for sell-timing alerts, or want intraday from the start?
-4. Any changes to **milestone order** or scope?
+Still open / future (deliberately deferred):
+- State capital-gains tax
+- Intraday / real-time prices
+- Additional cost-basis methods (e.g. average cost) as a configurable option
 
 ---
 
