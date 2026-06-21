@@ -1,11 +1,20 @@
 //! Thin client for the Plaid REST API (Investments product).
 //!
 //! We call Plaid's HTTP API directly via `reqwest` rather than depend on an
-//! unofficial SDK. The full endpoint set (link token, public-token exchange,
-//! `/investments/holdings/get`, `/investments/transactions/get`, webhooks) is
-//! implemented in M2; this scaffolding establishes the client + config.
+//! unofficial SDK. Every Plaid request is a POST whose JSON body carries the
+//! `client_id` + `secret`; endpoint-specific fields are added per call. The
+//! endpoint methods live in focused modules (`link`, `holdings`,
+//! `transactions`, `webhooks`) and hang off [`PlaidClient`].
 
+use serde::de::DeserializeOwned;
+use serde::Serialize;
 use thiserror::Error;
+
+pub mod holdings;
+pub mod link;
+pub mod transactions;
+pub mod webhooks;
+pub mod models;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlaidEnv {
@@ -34,12 +43,41 @@ impl PlaidEnv {
 pub enum PlaidError {
     #[error("http error: {0}")]
     Http(#[from] reqwest::Error),
-    #[error("plaid api error: {0}")]
-    Api(String),
+    #[error("failed to decode plaid response: {0}")]
+    Decode(String),
+    /// A structured error returned by Plaid (non-2xx with an error body).
+    #[error("plaid api error [{error_code}]: {error_message}")]
+    Api {
+        error_type: String,
+        error_code: String,
+        error_message: String,
+    },
 }
 
-/// Holds credentials and a reusable HTTP client. `client_id`/`secret` are sent
-/// in the body of every Plaid request.
+/// The error body Plaid returns on a non-2xx response.
+#[derive(Debug, serde::Deserialize)]
+struct PlaidApiErrorBody {
+    #[serde(default)]
+    error_type: String,
+    #[serde(default)]
+    error_code: String,
+    #[serde(default)]
+    error_message: String,
+}
+
+/// Wraps an endpoint request with the credentials Plaid expects in every body.
+/// `#[serde(flatten)]` merges the endpoint-specific fields in alongside the
+/// auth fields, so each endpoint only defines its own parameters.
+#[derive(Serialize)]
+struct Authed<'a, T> {
+    client_id: &'a str,
+    secret: &'a str,
+    #[serde(flatten)]
+    inner: T,
+}
+
+/// Holds credentials and a reusable HTTP client (cheap to clone — `reqwest`'s
+/// client is internally reference-counted).
 #[derive(Clone)]
 pub struct PlaidClient {
     http: reqwest::Client,
@@ -62,15 +100,47 @@ impl PlaidClient {
         self.env
     }
 
-    // Endpoint methods (link/token/holdings/transactions) are added in M2.
-    // Kept private now; fields are read here so they don't warn as unused.
-    #[allow(dead_code)]
-    fn internal(&self) -> (&reqwest::Client, &str, &str, &str) {
-        (
-            &self.http,
-            self.env.base_url(),
-            &self.client_id,
-            &self.secret,
-        )
+    /// True when no credentials are configured — handlers use this to return a
+    /// clear error instead of a confusing 400 from Plaid.
+    pub fn is_configured(&self) -> bool {
+        !self.client_id.is_empty() && !self.secret.is_empty()
+    }
+
+    /// POST `path` with `req` serialized into the body (plus auth), returning
+    /// the deserialized success response. Generic over request/response types so
+    /// every endpoint reuses the same transport + error handling.
+    pub(crate) async fn post<Req, Res>(&self, path: &str, req: Req) -> Result<Res, PlaidError>
+    where
+        Req: Serialize,
+        Res: DeserializeOwned,
+    {
+        let url = format!("{}{}", self.env.base_url(), path);
+        let body = Authed {
+            client_id: &self.client_id,
+            secret: &self.secret,
+            inner: req,
+        };
+
+        let resp = self.http.post(&url).json(&body).send().await?;
+        let status = resp.status();
+        let bytes = resp.bytes().await?;
+
+        if status.is_success() {
+            serde_json::from_slice(&bytes).map_err(|e| PlaidError::Decode(e.to_string()))
+        } else {
+            // Try to surface Plaid's structured error; fall back to raw text.
+            match serde_json::from_slice::<PlaidApiErrorBody>(&bytes) {
+                Ok(e) => Err(PlaidError::Api {
+                    error_type: e.error_type,
+                    error_code: e.error_code,
+                    error_message: e.error_message,
+                }),
+                Err(_) => Err(PlaidError::Api {
+                    error_type: "UNKNOWN".into(),
+                    error_code: status.as_u16().to_string(),
+                    error_message: String::from_utf8_lossy(&bytes).into_owned(),
+                }),
+            }
+        }
     }
 }

@@ -43,7 +43,7 @@ thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 dotenvy = "0.15"
-aes-gcm = "0.10"
+aes-gcm = { version = "0.10", features = ["std"] }
 base64 = "0.22"
 rand = "0.8"
 

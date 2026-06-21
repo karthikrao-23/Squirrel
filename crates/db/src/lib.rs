@@ -5,6 +5,7 @@ use sqlx::postgres::{PgPool, PgPoolOptions};
 use std::time::Duration;
 
 pub mod models;
+pub mod queries;
 
 /// Create a connection pool to PostgreSQL.
 ///

@@ -2,9 +2,11 @@
 //! Axum app.
 
 mod config;
+mod crypto;
 mod error;
 mod routes;
 mod state;
+mod sync;
 
 use config::Config;
 use state::AppState;
