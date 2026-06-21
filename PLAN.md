@@ -42,6 +42,32 @@ React frontend ──HTTP/JSON──► Axum backend ──SQLx──► Postgre
 | `plaid` | Plaid REST client | Isolates the external API |
 | `api` | Axum web server wiring it all together | The deployable binary |
 
+### Module structure (single-responsibility, future-proof)
+
+The crate boundary is the first layer of separation — the compiler enforces that
+`domain` can't reach for the DB or HTTP. Within each crate, **one module per
+responsibility**, so adding a feature means adding a module/file rather than editing
+existing logic (open/closed):
+
+```
+crates/
+  domain/src/   lib.rs · tax (M4) · lots (M3) · alerts (M5)        ← pure functions, one concern each
+  db/src/       lib.rs (connect/migrate) · models.rs · queries per entity (added per milestone)
+  plaid/src/    lib.rs (client/env) · endpoint modules: link, holdings, transactions, webhooks (M2)
+  api/src/      main · config · error · state · routes/{health, plaid, portfolio, tax, alerts}
+```
+
+How this stays easy to extend:
+- **New feature = new module + new route file**, then merged into the router in
+  `routes/mod.rs` — existing handlers are untouched (the M1 scaffold already does this
+  for `health`).
+- **`domain` holds zero I/O**, so tax/lot/alert rules are pure functions that are unit-
+  tested in isolation and reused by any caller (API now, a CLI or batch job later).
+- **Data access is funnelled through `db`** (typed `FromRow` models + per-entity query
+  modules), so a schema or query change has one home.
+- **External APIs are quarantined** in `plaid` behind a thin client, so swapping or
+  mocking the provider doesn't ripple outward.
+
 ### Stack
 - **Backend:** Rust — Axum 0.8, Tokio, SQLx 0.8 (never floats for money via rust_decimal),
   reqwest (Plaid). `lettre` (email) and `tokio-cron-scheduler` (jobs) are **added at M5** —
