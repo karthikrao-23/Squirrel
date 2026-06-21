@@ -12,6 +12,13 @@ pub enum AppError {
     #[error("database error: {0}")]
     Db(#[from] sqlx::Error),
 
+    #[error("plaid error: {0}")]
+    Plaid(#[from] plaid::PlaidError),
+
+    /// Caller asked for something that requires configuration we don't have.
+    #[error("{0}")]
+    BadRequest(String),
+
     // Constructed by resource endpoints starting in M3.
     #[allow(dead_code)]
     #[error("not found")]
@@ -25,6 +32,9 @@ impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let status = match &self {
             AppError::NotFound => StatusCode::NOT_FOUND,
+            AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
+            // Plaid is an upstream dependency, so its failures are a bad gateway.
+            AppError::Plaid(_) => StatusCode::BAD_GATEWAY,
             AppError::Db(_) | AppError::Other(_) => StatusCode::INTERNAL_SERVER_ERROR,
         };
         // Log the full error server-side; return a clean message to the client.
