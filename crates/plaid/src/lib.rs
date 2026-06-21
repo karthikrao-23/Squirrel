@@ -66,6 +66,11 @@ impl PlaidClient {
     // Kept private now; fields are read here so they don't warn as unused.
     #[allow(dead_code)]
     fn internal(&self) -> (&reqwest::Client, &str, &str, &str) {
-        (&self.http, self.env.base_url(), &self.client_id, &self.secret)
+        (
+            &self.http,
+            self.env.base_url(),
+            &self.client_id,
+            &self.secret,
+        )
     }
 }

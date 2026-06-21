@@ -12,6 +12,8 @@ pub enum AppError {
     #[error("database error: {0}")]
     Db(#[from] sqlx::Error),
 
+    // Constructed by resource endpoints starting in M3.
+    #[allow(dead_code)]
     #[error("not found")]
     NotFound,
 
