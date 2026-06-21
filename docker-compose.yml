@@ -1,0 +1,21 @@
+services:
+  db:
+    image: postgres:16
+    container_name: taxloss_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: taxloss
+      POSTGRES_PASSWORD: taxloss
+      POSTGRES_DB: taxloss
+    ports:
+      - "5432:5432"
+    volumes:
+      - taxloss_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U taxloss"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  taxloss_pgdata:

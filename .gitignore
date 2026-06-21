@@ -1,0 +1,19 @@
+# Rust
+/target
+**/*.rs.bk
+
+# Env / secrets
+.env
+*.local
+
+# SQLx offline cache is committed intentionally (.sqlx/), but build artifacts aren't.
+
+# Node / frontend (added in M6)
+web/node_modules
+web/dist
+
+# OS
+.DS_Store
+
+# Claude Code runtime artifacts
+.claude/scheduled_tasks.lock
