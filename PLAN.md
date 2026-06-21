@@ -7,7 +7,7 @@ productized later. This file is the source of truth for scope and direction — 
 > `/health` + auto-migrations on boot. Everything past this is intentional scaffold:
 > the Plaid client has no endpoints yet, `domain` holds only `FilingStatus`, and `db`
 > has row models but no query layer. Those land in M2–M5. Post-M1 review decisions are
-> recorded in §7.
+> recorded in §8.
 
 ---
 
@@ -122,7 +122,43 @@ serde test — the math below is not built yet).
 
 ---
 
-## 5. Milestones (each teaches specific Rust)
+## 5. API interface, onboarding & notifications
+
+REST/JSON over HTTP, all routes under `/api`. v1 is single-user (the user is resolved
+server-side); real auth arrives with productization. Endpoints land alongside their
+milestone:
+
+| Resource | Endpoint | Milestone |
+|---|---|---|
+| Onboarding | `POST /api/plaid/link-token` → Plaid Link token | M2 |
+| | `POST /api/plaid/exchange` → swap public_token, store encrypted item, trigger initial sync | M2 |
+| | `POST /api/plaid/webhook` → holdings/transaction updates from Plaid | M2 |
+| User | `GET/PATCH /api/profile` → filing status + taxable income (needed for tax math) | M3 |
+| Portfolio | `GET /api/accounts`, `GET /api/holdings`, `GET /api/transactions`, `GET /api/lots` | M3 |
+| Tax | `GET /api/tax/summary` (realized/unrealized + est. federal+CA tax) | M4 |
+| | `GET /api/tax/harvest` (loss candidates + wash-sale flags) | M4 |
+| | `POST /api/tax/simulate` (specific-lot sell → after-tax proceeds) | M4 |
+| Alerts | `GET /api/alerts`, `POST /api/alerts/:id/read` | M5 |
+
+**Onboarding flow:** land → "Connect your brokerage" (Plaid Link) → frontend gets a
+link-token, opens Link, returns a public_token → `exchange` stores the item and pulls
+holdings + transactions → lots are reconstructed → user sets filing status + taxable
+income → dashboard renders.
+
+**Notifications:** two channels. **In-app** — the `alerts` table, surfaced via
+`GET /api/alerts` (badge + list in the UI). **Email** — `lettre` at M5 sends tax-aware
+sell / harvest alerts; `alerts.emailed_at` tracks delivery. Push/SMS deferred.
+
+**Backend ↔ UI mapping:** each screen is backed by specific endpoints — dashboard →
+`holdings` + `tax/summary`; harvest → `tax/harvest` + `tax/simulate`; alerts →
+`alerts`; onboarding → `plaid/*`. The React app talks only to `/api` (TanStack Query),
+so the UI never depends on Plaid or DB shapes directly.
+
+> **UI/UX design happens before the frontend is built** — see the design milestone in §6.
+
+---
+
+## 6. Milestones (each teaches specific Rust)
 
 | | Milestone | Rust concepts | Status |
 |---|---|---|---|
@@ -131,12 +167,16 @@ serde test — the math below is not built yet).
 | M3 | Portfolio + lots API | iterators, ownership, decimal math | |
 | M4 | Tax engine | pure functions, testing, enums/pattern matching | |
 | M5 | Alerts + scheduler + email | background tasks, shared state | |
-| M6 | React frontend | (TS/React, not Rust) | |
-| M7 | Productization | auth, multi-user, secrets, deploy | |
+| M6 | UI/UX design (wireframes + Figma mocks) | (design, not Rust) — onboarding, dashboard, harvest, alerts; validates flows before coding | |
+| M7 | React frontend | (TS/React, not Rust) | |
+| M8 | Productization | auth, multi-user, secrets, deploy | |
+
+> M6 is a design gate: mock the onboarding, dashboard, harvest, and alerts screens (and
+> map each to the §5 endpoints) before building the React app in M7, to avoid rework.
 
 ---
 
-## 6. Verification per milestone
+## 7. Verification per milestone
 
 End-to-end checks, not just "it compiles". **CI** (`.github/workflows/ci.yml`) runs
 `fmt` + `clippy` + `build` + `test` on every push/PR — no Postgres needed since queries
@@ -147,11 +187,12 @@ are runtime strings, not the `sqlx::query!` macro.
 - **M3/M4:** `cargo test -p domain` with hand-checked fixtures (e.g. lot held 364 vs 366 days →
   ST vs LT; buy within 30 days → wash-sale flag); endpoint outputs vs manual calcs
 - **M5:** trigger scheduler job → `alerts` row created + test email delivered (Mailtrap)
-- **M6:** `npm run dev`; connect via Plaid sandbox; dashboard/charts/harvest/alerts render real data
+- **M6:** mocks reviewed for all core screens; each screen mapped to its §5 endpoints
+- **M7:** `npm run dev`; connect via Plaid sandbox; dashboard/charts/harvest/alerts render real data
 
 ---
 
-## 7. Decisions (post-M1 review) & assumptions
+## 8. Decisions (post-M1 review) & assumptions
 
 Resolved at the post-M1 review:
 1. **Cost basis:** FIFO to reconstruct historical realized gains, **plus specific-lot
@@ -160,7 +201,10 @@ Resolved at the post-M1 review:
    Other states deferred — engine stays state-aware so adding them is data, not a rewrite.
 3. **Pricing:** **End-of-day** prices from Plaid are sufficient for tax-timing alerts.
    Intraday market-data deferred.
-4. **Milestone order:** unchanged.
+4. **Milestone order:** a **UI/UX design gate (M6)** now precedes the React build (M7) —
+   Figma/wireframe mocks for the core screens before coding the frontend.
+5. **API surface & notifications:** REST/JSON under `/api` (see §5); user notifications
+   via in-app alerts **and** email (`lettre`, M5).
 
 Baked-in assumptions:
 - Plaid Investments covers **US + Canada** institutions only
@@ -169,7 +213,7 @@ Baked-in assumptions:
 
 ---
 
-## 8. Dev setup quick reference
+## 9. Dev setup quick reference
 
 - Rust installed via rustup at `~/.cargo` (source `~/.cargo/env` per shell)
 - `docker compose up -d` starts Postgres (creds `taxloss`/`taxloss`, db `taxloss`)
