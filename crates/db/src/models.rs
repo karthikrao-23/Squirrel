@@ -19,6 +19,22 @@ pub struct User {
 }
 
 #[derive(Debug, Clone, Serialize, FromRow)]
+pub struct PlaidItem {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub plaid_item_id: String,
+    // Encrypted token bytes (Postgres BYTEA); never serialized into responses.
+    #[serde(skip_serializing)]
+    pub access_token_encrypted: Vec<u8>,
+    pub institution_id: Option<String>,
+    pub institution_name: Option<String>,
+    pub transactions_cursor: Option<String>,
+    pub status: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, FromRow)]
 pub struct Account {
     pub id: Uuid,
     pub user_id: Uuid,

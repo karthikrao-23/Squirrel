@@ -11,6 +11,8 @@ use crate::config::Config;
 pub struct AppState {
     pub db: PgPool,
     pub plaid: PlaidClient,
+    // Read by Plaid/portfolio handlers from M2 onward.
+    #[allow(dead_code)]
     pub config: Config,
 }
 
