@@ -108,7 +108,8 @@ while single-user. **Bold** = already in place (M1); the rest is designed and sc
   webhook signatures**; ensure access tokens and webhook `payload` JSON are never logged.
 - **M6:** lock down **CORS** (tower-http cors is available) to the frontend origin.
 - **M7 (productization):** real **authentication + authorization**, per-user row scoping enforced
-  at query time, secrets manager instead of `.env`, and a hardened deploy.
+  at query time, secrets manager instead of `.env`, and a hardened deploy. The full
+  localhost→production runbook lives in **`DEPLOYMENT.md`**.
 
 **Known gaps to decide on before any real (non-sandbox) data:**
 - `BIND_ADDR` defaults to `0.0.0.0:8080` with no auth in front — fine for local Docker, not for
