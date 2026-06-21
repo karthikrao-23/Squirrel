@@ -4,7 +4,7 @@ A personal investment tracker built to **learn Rust** on the backend, designed t
 productized later. This file is the source of truth for scope and direction — edit it freely.
 
 > Status: **M1 complete** (backend skeleton + DB). Plan review done — **M2 (Plaid
-> integration) is the active next step.** See §7 for the decisions that came out of review.
+> integration) is the active next step.** See §8 for the decisions that came out of review.
 
 ---
 
@@ -72,7 +72,7 @@ Pure Rust, heavily unit-tested:
   + NIIT 3.8%. Brackets stored as year-keyed data so they're easy to update annually.
 - **Tax-loss harvesting:** flag unrealized losses; detect **wash sales** (same security bought
   within ±30 days). Operates on **user-selected specific lots** among the open lots for a
-  security (FIFO is only the historical-reconstruction default — see §3, §7).
+  security (FIFO is only the historical-reconstruction default — see §3, §8).
 - **"Good time to sell" signal:** for each selected lot, compare after-tax proceeds *now* vs.
   *after it crosses the 1-year long-term boundary*, using **end-of-day** prices — surface lots
   about to become long-term (selling now wastes the lower rate) or gains clearing a threshold
@@ -82,7 +82,41 @@ Pure Rust, heavily unit-tested:
 
 ---
 
-## 5. Milestones (each teaches specific Rust)
+## 5. Security
+
+Handling brokerage data and Plaid access tokens, so security is a first-class concern even
+while single-user. **Bold** = already in place (M1); the rest is designed and scheduled.
+
+**In place now (M1):**
+- **Plaid access tokens encrypted at rest.** Stored as `plaid_items.access_token_encrypted`
+  (`BYTEA`) — never the raw token. AES-GCM (authenticated encryption) with a key from
+  `TOKEN_ENCRYPTION_KEY`; crypto deps (`aes-gcm`, `base64`, `rand`) are already in the workspace.
+- **Secrets via env, never committed.** `.env` / `*.local` are gitignored; only `.env.example`
+  (empty values) is tracked. Config **fails fast** if `DATABASE_URL` is missing.
+- **No SQL injection by construction.** SQLx compile-time-checked, parameterized queries — no
+  string-built SQL.
+- **TLS everywhere.** `reqwest` and `sqlx` both pinned to `rustls` (Plaid API + DB over TLS).
+- **Tenant isolation designed in.** Every user-owned table carries `user_id` with
+  `ON DELETE CASCADE`, so per-row ownership scoping (and clean "delete my data") works without a
+  schema rewrite when auth lands.
+- **Sandbox-by-default for Plaid.** `PlaidEnv` falls back to Sandbox on any unrecognized value —
+  no accidental production access from a misconfigured env.
+- **Money is `NUMERIC` / `rust_decimal`,** never floats — integrity of tax/gain math.
+
+**Scheduled with the relevant milestone:**
+- **M2:** wire `TOKEN_ENCRYPTION_KEY` into `Config` + an encrypt/decrypt helper; **verify Plaid
+  webhook signatures**; ensure access tokens and webhook `payload` JSON are never logged.
+- **M6:** lock down **CORS** (tower-http cors is available) to the frontend origin.
+- **M7 (productization):** real **authentication + authorization**, per-user row scoping enforced
+  at query time, secrets manager instead of `.env`, and a hardened deploy.
+
+**Known gaps to decide on before any real (non-sandbox) data:**
+- `BIND_ADDR` defaults to `0.0.0.0:8080` with no auth in front — fine for local Docker, not for
+  exposed deploys.
+- No rate limiting or request-size limits on the Axum layer yet.
+- Plaid creds are optional at startup (convenient for M1) — add a production-env guard.
+
+## 6. Milestones (each teaches specific Rust)
 
 | | Milestone | Rust concepts | Status |
 |---|---|---|---|
@@ -96,7 +130,7 @@ Pure Rust, heavily unit-tested:
 
 ---
 
-## 6. Verification per milestone
+## 7. Verification per milestone
 
 End-to-end checks, not just "it compiles":
 
@@ -109,7 +143,7 @@ End-to-end checks, not just "it compiles":
 
 ---
 
-## 7. Decisions & assumptions
+## 8. Decisions & assumptions
 
 Decisions from the post-M1 review (these resolve the prior open questions):
 
@@ -123,7 +157,7 @@ Decisions from the post-M1 review (these resolve the prior open questions):
    future layer, not in scope now.
 3. **Prices — end-of-day** from Plaid. Day-granularity is sufficient for LT/ST boundary
    alerts; intraday is a later optional add and avoids a second market-data integration now.
-4. **Milestones — unchanged** (M2 → M7 as in §5).
+4. **Milestones — unchanged** (M2 → M7 as in §6).
 
 Baked-in assumptions:
 - Plaid Investments covers **US + Canada** institutions only
@@ -138,7 +172,7 @@ Still open / future (deliberately deferred):
 
 ---
 
-## 8. Dev setup quick reference
+## 9. Dev setup quick reference
 
 - Rust installed via rustup at `~/.cargo` (source `~/.cargo/env` per shell)
 - `docker compose up -d` starts Postgres (creds `taxloss`/`taxloss`, db `taxloss`)
