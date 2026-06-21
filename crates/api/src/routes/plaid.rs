@@ -51,7 +51,10 @@ async fn link_token(State(state): State<AppState>) -> Result<Json<Value>, AppErr
     let user = db::queries::users::ensure_default(&state.db).await?;
     let resp = state
         .plaid
-        .create_link_token(&user.id.to_string(), state.config.plaid_webhook_url.as_deref())
+        .create_link_token(
+            &user.id.to_string(),
+            state.config.plaid_webhook_url.as_deref(),
+        )
         .await?;
     Ok(Json(json!({
         "link_token": resp.link_token,
@@ -77,14 +80,20 @@ async fn sandbox_connect(
     let institution = body
         .and_then(|b| b.0.institution_id)
         .unwrap_or_else(|| SANDBOX_INSTITUTION.to_string());
-    let minted = state.plaid.sandbox_public_token_create(&institution).await?;
+    let minted = state
+        .plaid
+        .sandbox_public_token_create(&institution)
+        .await?;
     let resp = connect_with_public_token(&state, &minted.public_token).await?;
     Ok(Json(resp))
 }
 
 /// `POST /api/plaid/webhook` — always answer 200 (Plaid retries otherwise);
 /// errors are logged, not surfaced. Signature verification is deferred to M8.
-async fn webhook(State(state): State<AppState>, Json(hook): Json<plaid::webhooks::PlaidWebhook>) -> StatusCode {
+async fn webhook(
+    State(state): State<AppState>,
+    Json(hook): Json<plaid::webhooks::PlaidWebhook>,
+) -> StatusCode {
     tracing::info!(
         webhook_type = %hook.webhook_type,
         webhook_code = %hook.webhook_code,
@@ -131,7 +140,8 @@ async fn resync_item(state: &AppState, plaid_item_id: &str) -> anyhow::Result<()
         .config
         .token_encryption_key
         .ok_or_else(|| anyhow::anyhow!("TOKEN_ENCRYPTION_KEY not configured"))?;
-    let Some(item) = db::queries::plaid_items::find_by_plaid_item_id(&state.db, plaid_item_id).await?
+    let Some(item) =
+        db::queries::plaid_items::find_by_plaid_item_id(&state.db, plaid_item_id).await?
     else {
         tracing::warn!(item = %plaid_item_id, "webhook for unknown item; ignoring");
         return Ok(());

@@ -67,7 +67,8 @@ pub async fn sync_item(
     key: &[u8; 32],
     item: &PlaidItem,
 ) -> anyhow::Result<SyncSummary> {
-    let access_token = String::from_utf8(crate::crypto::decrypt(key, &item.access_token_encrypted)?)?;
+    let access_token =
+        String::from_utf8(crate::crypto::decrypt(key, &item.access_token_encrypted)?)?;
     let mut summary = SyncSummary::default();
 
     // --- Holdings (also yields the securities + accounts they reference) ---
@@ -180,6 +181,9 @@ pub async fn sync_item(
             break;
         }
     }
+
+    // Transactions changed, so derived tax lots are stale — rebuild them.
+    crate::lots::rebuild_lots(pool).await?;
 
     tracing::info!(?summary, item = %item.plaid_item_id, "sync complete");
     Ok(summary)

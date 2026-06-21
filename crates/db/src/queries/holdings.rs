@@ -3,8 +3,43 @@
 
 use chrono::NaiveDate;
 use rust_decimal::Decimal;
-use sqlx::PgPool;
+use serde::Serialize;
+use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
+
+/// A holding joined with its account + security, ready to serialize for the API.
+#[derive(Debug, Serialize, FromRow)]
+pub struct HoldingView {
+    pub account_id: Uuid,
+    pub account_name: String,
+    pub security_id: Uuid,
+    pub ticker: Option<String>,
+    pub security_name: Option<String>,
+    pub quantity: Decimal,
+    pub institution_price: Option<Decimal>,
+    pub institution_value: Option<Decimal>,
+    pub cost_basis: Option<Decimal>,
+    pub currency: Option<String>,
+}
+
+/// All holdings for the user, most valuable first.
+pub async fn list_with_security(pool: &PgPool, user_id: Uuid) -> sqlx::Result<Vec<HoldingView>> {
+    sqlx::query_as::<_, HoldingView>(
+        r#"
+        SELECT h.account_id, a.name AS account_name, h.security_id,
+               s.ticker, s.name AS security_name, h.quantity,
+               h.institution_price, h.institution_value, h.cost_basis, h.currency
+        FROM holdings h
+        JOIN accounts a ON a.id = h.account_id
+        JOIN securities s ON s.id = h.security_id
+        WHERE h.user_id = $1
+        ORDER BY h.institution_value DESC NULLS LAST
+        "#,
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await
+}
 
 #[allow(clippy::too_many_arguments)]
 pub async fn upsert(

@@ -20,7 +20,9 @@ pub struct PlaidWebhook {
 impl PlaidWebhook {
     /// True when this webhook means "investment data changed, re-sync".
     pub fn is_investments_update(&self) -> bool {
-        matches!(self.webhook_type.as_str(), "HOLDINGS" | "INVESTMENTS_TRANSACTIONS")
-            && self.webhook_code == "DEFAULT_UPDATE"
+        matches!(
+            self.webhook_type.as_str(),
+            "HOLDINGS" | "INVESTMENTS_TRANSACTIONS"
+        ) && self.webhook_code == "DEFAULT_UPDATE"
     }
 }

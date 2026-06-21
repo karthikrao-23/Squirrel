@@ -47,11 +47,7 @@ pub async fn find_by_plaid_item_id(
 }
 
 /// Record the institution id once we learn it from a holdings response.
-pub async fn set_institution_id(
-    pool: &PgPool,
-    id: Uuid,
-    institution_id: &str,
-) -> sqlx::Result<()> {
+pub async fn set_institution_id(pool: &PgPool, id: Uuid, institution_id: &str) -> sqlx::Result<()> {
     sqlx::query(
         "UPDATE plaid_items SET institution_id = $2, updated_at = now() WHERE id = $1 AND institution_id IS NULL",
     )

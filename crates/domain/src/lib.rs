@@ -7,6 +7,8 @@
 //! - `lots`  (M3): FIFO cost-basis lot reconstruction from transactions
 //! - `alerts`(M5): "good time to sell" and tax-loss-harvest rules
 
+pub mod lots;
+
 /// Filing status drives which federal bracket table applies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]

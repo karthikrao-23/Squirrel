@@ -3,8 +3,74 @@
 
 use chrono::NaiveDate;
 use rust_decimal::Decimal;
-use sqlx::PgPool;
+use serde::Serialize;
+use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
+
+/// A transaction joined with its security ticker, for the API.
+#[derive(Debug, Serialize, FromRow)]
+pub struct TransactionView {
+    pub id: Uuid,
+    pub date: NaiveDate,
+    pub account_id: Uuid,
+    pub ticker: Option<String>,
+    pub transaction_type: Option<String>,
+    pub subtype: Option<String>,
+    pub quantity: Option<Decimal>,
+    pub price: Option<Decimal>,
+    pub amount: Option<Decimal>,
+    pub fees: Option<Decimal>,
+    pub name: Option<String>,
+}
+
+/// Recent transactions, newest first.
+pub async fn list(pool: &PgPool, user_id: Uuid, limit: i64) -> sqlx::Result<Vec<TransactionView>> {
+    sqlx::query_as::<_, TransactionView>(
+        r#"
+        SELECT t.id, t.date, t.account_id, s.ticker, t.type AS transaction_type,
+               t.subtype, t.quantity, t.price, t.amount, t.fees, t.name
+        FROM transactions t
+        LEFT JOIN securities s ON s.id = t.security_id
+        WHERE t.user_id = $1
+        ORDER BY t.date DESC, t.id
+        LIMIT $2
+        "#,
+    )
+    .bind(user_id)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+}
+
+/// Minimal transaction fields needed to reconstruct tax lots, grouped by
+/// (account, security) and ordered chronologically. Only rows with a security.
+#[derive(Debug, FromRow)]
+pub struct LotTxnRow {
+    pub id: Uuid,
+    pub account_id: Uuid,
+    pub security_id: Uuid,
+    pub transaction_type: Option<String>,
+    pub quantity: Option<Decimal>,
+    pub price: Option<Decimal>,
+    pub amount: Option<Decimal>,
+    pub fees: Option<Decimal>,
+    pub date: NaiveDate,
+}
+
+pub async fn list_for_lots(pool: &PgPool, user_id: Uuid) -> sqlx::Result<Vec<LotTxnRow>> {
+    sqlx::query_as::<_, LotTxnRow>(
+        r#"
+        SELECT t.id, t.account_id, t.security_id, t.type AS transaction_type,
+               t.quantity, t.price, t.amount, t.fees, t.date
+        FROM transactions t
+        WHERE t.user_id = $1 AND t.security_id IS NOT NULL
+        ORDER BY t.account_id, t.security_id, t.date, t.id
+        "#,
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await
+}
 
 #[allow(clippy::too_many_arguments)]
 pub struct NewTransaction<'a> {
