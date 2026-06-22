@@ -26,3 +26,7 @@ rand = { workspace = true }
 domain = { workspace = true }
 db = { workspace = true }
 plaid = { workspace = true }
+
+[dev-dependencies]
+tower = { workspace = true }
+rust_decimal_macros = { workspace = true }
