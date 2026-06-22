@@ -12,7 +12,7 @@ use serde::Serialize;
 /// Long-term if the holding period exceeds one year (> 365 days). Exactly one
 /// year is short-term, matching the IRS "more than one year" rule. (Day-count is
 /// a slight approximation across leap years; refine later if needed.)
-const LONG_TERM_DAYS: i64 = 365;
+pub const LONG_TERM_DAYS: i64 = 365;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]

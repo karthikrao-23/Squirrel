@@ -4,6 +4,7 @@
 //! and CI runs without a live database.
 
 pub mod accounts;
+pub mod alerts;
 pub mod holdings;
 pub mod plaid_items;
 pub mod securities;

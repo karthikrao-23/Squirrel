@@ -166,7 +166,7 @@ so the UI never depends on Plaid or DB shapes directly.
 | M2 | Plaid integration | serde, traits, error propagation | ✅ done |
 | M3 | Portfolio + lots API | iterators, ownership, decimal math | ✅ done |
 | M4 | Tax engine | pure functions, testing, enums/pattern matching | ✅ done |
-| M5 | Alerts + scheduler + email | background tasks, shared state | |
+| M5 | Alerts + scheduler + email | background tasks, shared state | ✅ done |
 | M6 | UI/UX design (wireframes + Figma mocks) | (design, not Rust) — onboarding, dashboard, harvest, alerts; validates flows before coding | |
 | M7 | React frontend | (TS/React, not Rust) | |
 | M8 | Productization | auth, multi-user, secrets, deploy | |
