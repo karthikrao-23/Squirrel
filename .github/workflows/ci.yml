@@ -55,3 +55,51 @@ jobs:
 
       - name: Test
         run: cargo test --workspace
+
+  coverage:
+    name: coverage (llvm-cov)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: taxloss
+          POSTGRES_PASSWORD: taxloss
+          POSTGRES_DB: taxloss
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U taxloss"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgres://taxloss:taxloss@localhost:5432/taxloss
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+
+      - name: Cache cargo registry and target
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Coverage (summary + lcov)
+        run: |
+          cargo llvm-cov --workspace --summary-only
+          cargo llvm-cov --workspace --lcov --output-path lcov.info
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-lcov
+          path: lcov.info
+
