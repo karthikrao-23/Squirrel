@@ -1,0 +1,109 @@
+<!-- @dsCard group="Screens" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>TaxLossApp — Alerts</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<div class="topbar">
+  <div class="brand"><span class="logo">T</span> TaxLossApp</div>
+  <nav class="nav">
+    <a href="dashboard.html">Dashboard</a>
+    <a href="harvest.html">Harvest</a>
+    <a href="alerts.html" class="active">Alerts</a>
+  </nav>
+  <div class="spacer"></div>
+  <div class="bell">🔔<span class="badge">3</span></div>
+</div>
+
+<div class="app" style="max-width: 820px;">
+  <div class="page-head">
+    <h1>Alerts</h1>
+    <p>Tax-aware sell &amp; harvest signals from the nightly scheduler. <span class="api">GET /api/alerts</span></p>
+  </div>
+
+  <div class="toolbar">
+    <div class="toggle">
+      <button class="on">All</button>
+      <button>Unread</button>
+    </div>
+    <span class="faint">?unread_only=true</span>
+    <div class="spacer" style="flex:1"></div>
+    <button class="btn">Mark all read</button>
+  </div>
+
+  <div class="card">
+    <!-- approaching_long_term -->
+    <div class="alert-item unread">
+      <span class="unread-dot"></span>
+      <div class="alert-ic lt">⏳</div>
+      <div class="alert-body">
+        <div class="t">NVDA becomes long-term in 9 days</div>
+        <div class="m">Holding NVDA 9 more day(s) makes the gain long-term — an estimated $1,540 tax saving versus selling now.</div>
+        <div class="alert-meta">
+          <span class="chip lt">approaching_long_term</span>
+          <span class="gain">+$1,540 saving</span>
+          <span>· 2h ago</span>
+          <span>· ✉ emailed</span>
+        </div>
+      </div>
+      <button class="btn">Mark read</button>
+    </div>
+
+    <!-- harvestable_loss -->
+    <div class="alert-item unread">
+      <span class="unread-dot"></span>
+      <div class="alert-ic loss">📉</div>
+      <div class="alert-body">
+        <div class="t">Harvestable loss in ARKK</div>
+        <div class="m">ARKK is $3,840 below cost. Realizing this short-term loss could save an estimated $1,612 in tax.</div>
+        <div class="alert-meta">
+          <span class="chip loss">harvestable_loss</span>
+          <span class="gain">+$1,612 saving</span>
+          <span>· 2h ago</span>
+          <span>· ✉ emailed</span>
+        </div>
+      </div>
+      <button class="btn">Mark read</button>
+    </div>
+
+    <!-- harvestable_loss w/ wash-sale -->
+    <div class="alert-item unread">
+      <span class="unread-dot"></span>
+      <div class="alert-ic loss">📉</div>
+      <div class="alert-body">
+        <div class="t">Harvestable loss in PYPL <span class="chip warn dot">wash-sale risk</span></div>
+        <div class="m">PYPL is $1,180 below cost (est. $496 saving) — but you bought it within 30 days, so the loss may be disallowed.</div>
+        <div class="alert-meta">
+          <span class="chip loss">harvestable_loss</span>
+          <span class="gain">+$496 saving</span>
+          <span>· 1d ago</span>
+          <span class="faint">· not emailed</span>
+        </div>
+      </div>
+      <button class="btn">Mark read</button>
+    </div>
+
+    <!-- read -->
+    <div class="alert-item">
+      <span style="width:8px;flex:none"></span>
+      <div class="alert-ic lt">⏳</div>
+      <div class="alert-body">
+        <div class="t muted">AAPL becomes long-term in 21 days</div>
+        <div class="m">Holding AAPL 21 more day(s) makes the gain long-term — an estimated $820 tax saving versus selling now.</div>
+        <div class="alert-meta">
+          <span class="chip lt">approaching_long_term</span>
+          <span>+$820 saving</span>
+          <span>· 3d ago · read</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <p class="foot">Alerts also delivered by email (lettre). Estimates are <strong>not tax advice</strong>.</p>
+</div>
+</body>
+</html>

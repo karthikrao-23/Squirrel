@@ -1,0 +1,98 @@
+<!-- @dsCard group="Screens" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>TaxLossApp — Tax-loss harvesting</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<div class="topbar">
+  <div class="brand"><span class="logo">T</span> TaxLossApp</div>
+  <nav class="nav">
+    <a href="dashboard.html">Dashboard</a>
+    <a href="harvest.html" class="active">Harvest</a>
+    <a href="alerts.html">Alerts</a>
+  </nav>
+  <div class="spacer"></div>
+  <div class="bell">🔔<span class="badge">3</span></div>
+</div>
+
+<div class="app">
+  <div class="page-head">
+    <h1>Tax-loss harvesting</h1>
+    <p>Lots trading below cost — selling realizes a loss that can offset gains. <span class="api">GET /api/tax/harvest</span></p>
+  </div>
+
+  <div class="disclaimer mt8">⚠️ <div>These are estimates for decision-support, <strong>not tax advice</strong>. Wash-sale flags are heuristic (same security bought within ±30 days). Confirm with a tax professional before trading.</div></div>
+
+  <div class="grid dash mt16">
+    <!-- Candidates — GET /api/tax/harvest (HarvestCandidate[]) -->
+    <div class="card">
+      <div class="card-head"><h2>Loss candidates</h2><span class="faint">select lots to simulate a sale</span></div>
+      <table>
+        <thead>
+          <tr>
+            <th><input type="checkbox" /></th>
+            <th>Security</th><th>Opened</th><th>Term</th>
+            <th class="r">Qty</th><th class="r">Market value</th>
+            <th class="r">Unrealized loss</th><th class="r">Est. tax saving</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><input type="checkbox" checked /></td>
+            <td class="tick">ARKK<span class="name">ARK Innovation ETF</span></td>
+            <td class="num muted">2025-09-02</td>
+            <td><span class="chip st">Short-term</span></td>
+            <td class="r num">300</td><td class="r num">$14,460</td>
+            <td class="r num loss">−$3,840</td><td class="r num gain">$1,612</td>
+          </tr>
+          <tr>
+            <td><input type="checkbox" checked /></td>
+            <td class="tick">BND<span class="name">Vanguard Total Bond ETF</span></td>
+            <td class="num muted">2023-04-18</td>
+            <td><span class="chip lt">Long-term</span></td>
+            <td class="r num">600</td><td class="r num">$43,230</td>
+            <td class="r num loss">−$2,670</td><td class="r num gain">$614</td>
+          </tr>
+          <tr>
+            <td><input type="checkbox" /></td>
+            <td class="tick">PYPL <span class="chip warn dot">wash-sale risk</span><span class="name">PayPal Holdings</span></td>
+            <td class="num muted">2025-12-01</td>
+            <td><span class="chip st">Short-term</span></td>
+            <td class="r num">80</td><td class="r num">$5,120</td>
+            <td class="r num loss">−$1,180</td><td class="r num gain">$496</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Simulator — POST /api/tax/simulate (SimulateResp) -->
+    <div class="card">
+      <div class="card-head"><h2>Sell simulation</h2><span class="api">POST /api/tax/simulate</span></div>
+      <div class="card-body">
+        <p class="faint" style="margin-top:0">2 lots selected · sells modeled at today's close price</p>
+        <div class="flex between"><span class="muted">Proceeds</span><span class="num">$57,690</span></div>
+        <div class="flex between mt8"><span class="muted">Cost basis</span><span class="num">$64,200</span></div>
+        <div class="flex between mt8"><span class="muted">Short-term gain</span><span class="num loss">−$3,840</span></div>
+        <div class="flex between mt8"><span class="muted">Long-term gain</span><span class="num loss">−$2,670</span></div>
+        <hr class="sep" />
+        <div class="flex between"><span class="muted">Total realized loss</span><span class="num loss">−$6,510</span></div>
+        <div class="flex between mt8"><span class="muted">Est. tax effect</span><span class="num gain">−$2,226 saved</span></div>
+        <div class="faint" style="font-size:12px;margin-top:2px">fed −$1,789 · NIIT −$0 · CA −$437</div>
+        <hr class="sep" />
+        <div class="flex between" style="font-size:16px;font-weight:700">
+          <span>After-tax proceeds</span><span class="num">$59,916</span>
+        </div>
+        <button class="btn primary block lg mt16">Export sell plan</button>
+        <p class="hint mt8">Simulation only — TaxLossApp never places trades.</p>
+      </div>
+    </div>
+  </div>
+
+  <p class="foot">Estimates are decision-support, <strong>not tax advice</strong>. Federal + California only · v1.</p>
+</div>
+</body>
+</html>
