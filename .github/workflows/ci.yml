@@ -12,6 +12,27 @@ jobs:
   check:
     name: fmt + clippy + build + test
     runs-on: ubuntu-latest
+
+    # Postgres for integration tests. `#[sqlx::test]` provisions an isolated
+    # database per test on this server (the default superuser has CREATEDB).
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: taxloss
+          POSTGRES_PASSWORD: taxloss
+          POSTGRES_DB: taxloss
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U taxloss"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgres://taxloss:taxloss@localhost:5432/taxloss
+
     steps:
       - uses: actions/checkout@v4
 
@@ -23,8 +44,6 @@ jobs:
       - name: Cache cargo registry and target
         uses: Swatinem/rust-cache@v2
 
-      # No Postgres service is needed: queries are runtime strings (not the
-      # sqlx::query! macro), so the workspace compiles and tests without a DB.
       - name: Format
         run: cargo fmt --all -- --check
 
