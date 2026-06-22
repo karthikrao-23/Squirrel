@@ -4,6 +4,7 @@
 mod config;
 mod crypto;
 mod error;
+mod lots;
 mod routes;
 mod state;
 mod sync;

@@ -3,6 +3,16 @@
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use crate::models::Account;
+
+/// All accounts owned by the user, ordered by name.
+pub async fn list(pool: &PgPool, user_id: Uuid) -> sqlx::Result<Vec<Account>> {
+    sqlx::query_as::<_, Account>("SELECT * FROM accounts WHERE user_id = $1 ORDER BY name")
+        .bind(user_id)
+        .fetch_all(pool)
+        .await
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn upsert(
     pool: &PgPool,

@@ -12,9 +12,9 @@ use thiserror::Error;
 
 pub mod holdings;
 pub mod link;
+pub mod models;
 pub mod transactions;
 pub mod webhooks;
-pub mod models;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlaidEnv {

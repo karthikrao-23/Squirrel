@@ -3,6 +3,8 @@
 
 pub mod health;
 pub mod plaid;
+pub mod portfolio;
+pub mod profile;
 
 use axum::Router;
 
@@ -12,5 +14,7 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .merge(health::router())
         .merge(plaid::router())
+        .merge(portfolio::router())
+        .merge(profile::router())
         .with_state(state)
 }
