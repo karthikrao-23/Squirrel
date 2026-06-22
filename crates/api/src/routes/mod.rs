@@ -5,6 +5,7 @@ pub mod health;
 pub mod plaid;
 pub mod portfolio;
 pub mod profile;
+pub mod tax;
 
 use axum::Router;
 
@@ -16,5 +17,6 @@ pub fn router(state: AppState) -> Router {
         .merge(plaid::router())
         .merge(portfolio::router())
         .merge(profile::router())
+        .merge(tax::router())
         .with_state(state)
 }
