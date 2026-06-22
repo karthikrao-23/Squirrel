@@ -196,3 +196,51 @@ async fn tax_lots_replace_is_atomic_and_overwrites(pool: PgPool) -> sqlx::Result
         .is_empty());
     Ok(())
 }
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn alerts_dedup_until_read(pool: PgPool) -> sqlx::Result<()> {
+    let user = queries::users::ensure_default(&pool).await?;
+    let payload = serde_json::json!({"saving": 100});
+
+    let first = queries::alerts::create_if_absent(
+        &pool,
+        user.id,
+        "harvestable_loss",
+        None,
+        "Loss",
+        "msg",
+        payload.clone(),
+    )
+    .await?;
+    assert!(first.is_some(), "first alert is created");
+
+    let dup = queries::alerts::create_if_absent(
+        &pool,
+        user.id,
+        "harvestable_loss",
+        None,
+        "Loss",
+        "msg",
+        payload.clone(),
+    )
+    .await?;
+    assert!(dup.is_none(), "duplicate unread alert is suppressed");
+
+    // Once read, the same condition can alert again.
+    assert!(queries::alerts::mark_read(&pool, user.id, first.unwrap().id).await?);
+    let again = queries::alerts::create_if_absent(
+        &pool,
+        user.id,
+        "harvestable_loss",
+        None,
+        "Loss",
+        "msg",
+        payload,
+    )
+    .await?;
+    assert!(again.is_some());
+
+    assert_eq!(queries::alerts::list(&pool, user.id, false).await?.len(), 2);
+    assert_eq!(queries::alerts::list(&pool, user.id, true).await?.len(), 1);
+    Ok(())
+}

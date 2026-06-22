@@ -57,3 +57,13 @@ pub async fn set_institution_id(pool: &PgPool, id: Uuid, institution_id: &str) -
     .await?;
     Ok(())
 }
+
+/// All items linked by a user (used by the scheduler to refresh each).
+pub async fn list_for_user(pool: &PgPool, user_id: Uuid) -> sqlx::Result<Vec<PlaidItem>> {
+    sqlx::query_as::<_, PlaidItem>(
+        "SELECT * FROM plaid_items WHERE user_id = $1 ORDER BY created_at",
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await
+}

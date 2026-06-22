@@ -7,6 +7,7 @@
 //! - `lots`  (M3): FIFO cost-basis lot reconstruction from transactions
 //! - `alerts`(M5): "good time to sell" and tax-loss-harvest rules
 
+pub mod alerts;
 pub mod lots;
 pub mod tax;
 
@@ -18,6 +19,19 @@ pub enum FilingStatus {
     MarriedFilingJointly,
     MarriedFilingSeparately,
     HeadOfHousehold,
+}
+
+impl FilingStatus {
+    /// Parse the value stored in the DB (snake_case), defaulting to `Single` for
+    /// anything unrecognized.
+    pub fn from_db_str(s: &str) -> Self {
+        match s {
+            "married_filing_jointly" => FilingStatus::MarriedFilingJointly,
+            "married_filing_separately" => FilingStatus::MarriedFilingSeparately,
+            "head_of_household" => FilingStatus::HeadOfHousehold,
+            _ => FilingStatus::Single,
+        }
+    }
 }
 
 #[cfg(test)]

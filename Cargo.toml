@@ -46,6 +46,13 @@ dotenvy = "0.15"
 aes-gcm = { version = "0.10", features = ["std"] }
 base64 = "0.22"
 rand = "0.8"
+tokio-cron-scheduler = "0.13"
+lettre = { version = "0.11", default-features = false, features = [
+    "builder",
+    "tokio1",
+    "tokio1-rustls-tls",
+    "smtp-transport",
+] }
 
 # Local crates
 domain = { path = "crates/domain" }

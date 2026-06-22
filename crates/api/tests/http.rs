@@ -20,6 +20,10 @@ fn test_config() -> api::config::Config {
         plaid_secret: String::new(),
         token_encryption_key: None,
         plaid_webhook_url: None,
+        smtp: None,
+        alert_cron: "0 0 * * * *".into(),
+        alert_min_tax_saving: rust_decimal::Decimal::new(50, 0),
+        alert_approaching_window_days: 30,
     }
 }
 
@@ -199,4 +203,78 @@ async fn tax_summary_reports_long_term_gain(pool: PgPool) {
     assert_eq!(num(&body["total_market_value"]), 1900.0);
     // Federal LT @ 15% (gain sits in the 15% band above $100k base) = 277.5
     assert!((num(&body["estimated_tax_if_sold_now"]["federal"]) - 277.5).abs() < 0.01);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn alerts_evaluate_list_and_read(pool: PgPool) {
+    // Seed a long-term *loss* lot → should produce a harvestable-loss alert.
+    let user = db::queries::users::ensure_default(&pool).await.unwrap();
+    db::queries::users::update_profile(&pool, user.id, "single", dec!(100000))
+        .await
+        .unwrap();
+    let item = db::queries::plaid_items::upsert(&pool, user.id, "item_1", b"enc", None)
+        .await
+        .unwrap();
+    let acct = db::queries::accounts::upsert(
+        &pool,
+        user.id,
+        item.id,
+        "acct_1",
+        "Brokerage",
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let sec = db::queries::securities::upsert(
+        &pool,
+        "sec_1",
+        Some("LOSS"),
+        None,
+        None,
+        None,
+        Some(dec!(50)),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    db::queries::tax_lots::replace_for_user(
+        &pool,
+        user.id,
+        &[db::queries::tax_lots::NewLot {
+            account_id: acct,
+            security_id: sec,
+            open_date: chrono::NaiveDate::from_ymd_opt(2020, 1, 1).unwrap(),
+            original_quantity: dec!(100),
+            remaining_quantity: dec!(100),
+            cost_basis_per_share: dec!(200), // basis 200 vs price 50 → big loss
+            source_transaction_id: None,
+        }],
+    )
+    .await
+    .unwrap();
+
+    let app = app(pool);
+
+    // Evaluate: creates at least one alert (no SMTP → 0 emailed).
+    let (status, body) = send_json(&app, "POST", "/api/alerts/evaluate", json!({})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(num(&body["created"]) >= 1.0);
+    assert_eq!(num(&body["emailed"]), 0.0);
+
+    // It shows up in the list.
+    let (status, body) = get(&app, "/api/alerts").await;
+    assert_eq!(status, StatusCode::OK);
+    let alerts = body["alerts"].as_array().unwrap();
+    assert!(!alerts.is_empty());
+    assert_eq!(alerts[0]["type"], "harvestable_loss");
+    let id = alerts[0]["id"].as_str().unwrap().to_string();
+
+    // Mark it read → it leaves the unread list.
+    let (status, _) = send_json(&app, "POST", &format!("/api/alerts/{id}/read"), json!({})).await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, body) = get(&app, "/api/alerts?unread_only=true").await;
+    assert_eq!(body["alerts"].as_array().unwrap().len(), 0);
 }

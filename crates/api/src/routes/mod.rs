@@ -1,6 +1,7 @@
 //! HTTP route definitions. New feature routers (plaid, portfolio, tax, alerts)
 //! are merged in here as later milestones land.
 
+pub mod alerts;
 pub mod health;
 pub mod plaid;
 pub mod portfolio;
@@ -18,5 +19,6 @@ pub fn router(state: AppState) -> Router {
         .merge(portfolio::router())
         .merge(profile::router())
         .merge(tax::router())
+        .merge(alerts::router())
         .with_state(state)
 }
