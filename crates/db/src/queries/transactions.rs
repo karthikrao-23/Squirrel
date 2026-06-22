@@ -57,6 +57,27 @@ pub struct LotTxnRow {
     pub date: NaiveDate,
 }
 
+/// Security ids the user *bought* on or after `since` — used to flag wash-sale
+/// risk (a purchase within 30 days of selling the same security at a loss).
+pub async fn recent_buy_security_ids(
+    pool: &PgPool,
+    user_id: Uuid,
+    since: NaiveDate,
+) -> sqlx::Result<Vec<Uuid>> {
+    sqlx::query_scalar::<_, Uuid>(
+        r#"
+        SELECT DISTINCT security_id
+        FROM transactions
+        WHERE user_id = $1 AND lower(type) = 'buy'
+          AND security_id IS NOT NULL AND date >= $2
+        "#,
+    )
+    .bind(user_id)
+    .bind(since)
+    .fetch_all(pool)
+    .await
+}
+
 pub async fn list_for_lots(pool: &PgPool, user_id: Uuid) -> sqlx::Result<Vec<LotTxnRow>> {
     sqlx::query_as::<_, LotTxnRow>(
         r#"

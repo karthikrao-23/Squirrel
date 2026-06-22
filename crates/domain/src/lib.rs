@@ -8,6 +8,7 @@
 //! - `alerts`(M5): "good time to sell" and tax-loss-harvest rules
 
 pub mod lots;
+pub mod tax;
 
 /// Filing status drives which federal bracket table applies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
