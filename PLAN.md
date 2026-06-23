@@ -221,3 +221,37 @@ Baked-in assumptions:
 - `.env` is gitignored; `.env.example` documents all vars
 - `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`,
   and `cargo test --workspace` mirror what CI enforces — run them before pushing
+
+---
+
+## 10. Security
+
+Squirrel handles brokerage data and Plaid access tokens, so security is a first-class concern
+even while single-user. **Bold** = already in place; the rest is designed and scheduled.
+
+**In place now:**
+- **Plaid access tokens encrypted at rest.** Stored as `plaid_items.access_token_encrypted`
+  (`BYTEA`) — never the raw token. AES-GCM (authenticated encryption) with a key from
+  `TOKEN_ENCRYPTION_KEY`.
+- **Secrets via env, never committed.** `.env` / `*.local` are gitignored; only `.env.example`
+  (empty values) is tracked. Config **fails fast** if `DATABASE_URL` is missing.
+- **No SQL injection by construction.** SQLx parameterized queries — no string-built SQL.
+- **TLS everywhere.** `reqwest` and `sqlx` are pinned to `rustls` (Plaid API + DB over TLS).
+- **Tenant isolation designed in.** Every user-owned table carries `user_id` with
+  `ON DELETE CASCADE`, so per-row ownership scoping (and a clean "delete my data") works without
+  a schema rewrite when auth lands.
+- **Sandbox-by-default for Plaid.** `PlaidEnv` falls back to Sandbox on any unrecognized value.
+- **Money is `NUMERIC` / `rust_decimal`,** never floats.
+
+**Scheduled for M8 (productization):**
+- **Verify Plaid webhook signatures** — the webhook handler currently trusts the body
+  (signature verification was explicitly deferred to M8).
+- Lock down **CORS** (`tower-http`) to the frontend origin.
+- Real **authentication + authorization** with per-user row scoping enforced at query time, a
+  secrets manager instead of `.env`, and a hardened deploy. See `DEPLOYMENT.md`.
+
+**Known gaps to resolve before any real (non-sandbox) data:**
+- `BIND_ADDR` defaults to `0.0.0.0:8080` with no auth in front — fine for local Docker, not for
+  exposed deploys.
+- No rate limiting or request-size limits on the Axum layer yet.
+- Plaid creds are optional at startup (convenient for dev) — add a production-env guard.
