@@ -1,0 +1,49 @@
+<!-- @dsCard group="Overview" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>TaxLossApp — M6 design mocks</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<div class="topbar">
+  <div class="brand"><span class="logo">T</span> TaxLossApp · M6 design</div>
+  <div class="spacer"></div>
+  <span class="muted">wireframes &amp; mocks</span>
+</div>
+
+<div class="app" style="max-width: 860px;">
+  <div class="page-head">
+    <h1>UI/UX design mocks</h1>
+    <p>The M6 design gate: four core screens, each mapped to its §5 API endpoints, reviewed before the React build (M7).</p>
+  </div>
+
+  <div class="grid cols-3">
+    <a class="card" style="text-decoration:none;color:inherit" href="onboarding.html">
+      <div class="card-body"><div class="alert-ic lt">🔗</div><h2 style="margin:10px 0 4px">Onboarding</h2>
+        <p class="muted" style="margin:0">Connect (Plaid Link) → sync → tax profile.</p>
+        <p class="api mt8">plaid/* · PATCH /api/profile</p></div>
+    </a>
+    <a class="card" style="text-decoration:none;color:inherit" href="dashboard.html">
+      <div class="card-body"><div class="alert-ic lt">📊</div><h2 style="margin:10px 0 4px">Dashboard</h2>
+        <p class="muted" style="margin:0">Net value, unrealized gain, holdings.</p>
+        <p class="api mt8">tax/summary · holdings</p></div>
+    </a>
+    <a class="card" style="text-decoration:none;color:inherit" href="harvest.html">
+      <div class="card-body"><div class="alert-ic loss">📉</div><h2 style="margin:10px 0 4px">Harvest</h2>
+        <p class="muted" style="margin:0">Loss candidates + sell simulator.</p>
+        <p class="api mt8">tax/harvest · tax/simulate</p></div>
+    </a>
+    <a class="card" style="text-decoration:none;color:inherit" href="alerts.html">
+      <div class="card-body"><div class="alert-ic lt">🔔</div><h2 style="margin:10px 0 4px">Alerts</h2>
+        <p class="muted" style="margin:0">Tax-aware sell &amp; harvest signals.</p>
+        <p class="api mt8">GET /api/alerts</p></div>
+    </a>
+  </div>
+
+  <p class="foot">See <strong>DESIGN.md</strong> for the full screen→endpoint map, component inventory, and empty/loading/error states.</p>
+</div>
+</body>
+</html>

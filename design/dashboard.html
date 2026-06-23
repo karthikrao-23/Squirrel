@@ -1,0 +1,155 @@
+<!-- @dsCard group="Screens" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>TaxLossApp — Dashboard</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<div class="topbar">
+  <div class="brand"><span class="logo">T</span> TaxLossApp</div>
+  <nav class="nav">
+    <a href="dashboard.html" class="active">Dashboard</a>
+    <a href="harvest.html">Harvest</a>
+    <a href="alerts.html">Alerts</a>
+  </nav>
+  <div class="spacer"></div>
+  <div class="bell">🔔<span class="badge">3</span></div>
+</div>
+
+<div class="app">
+  <div class="page-head flex between">
+    <div>
+      <h1>Dashboard</h1>
+      <p>As of Jun 21, 2026 · 2 accounts · <span class="api">GET /api/tax/summary · GET /api/holdings</span></p>
+    </div>
+    <button class="btn">↻ Re-sync</button>
+  </div>
+
+  <!-- Stat tiles — GET /api/tax/summary -->
+  <div class="grid cols-4">
+    <div class="card stat">
+      <div class="label">Market value</div>
+      <div class="value num">$248,930</div>
+      <div class="sub">total_market_value · 36 lots valued</div>
+    </div>
+    <div class="card stat">
+      <div class="label">Total unrealized</div>
+      <div class="value num gain">+$41,205</div>
+      <div class="sub">cost basis $207,725</div>
+    </div>
+    <div class="card stat">
+      <div class="label">ST / LT split</div>
+      <div class="value num"><span class="loss">$6,140</span> <span class="faint">/</span> <span class="gain">$35,065</span></div>
+      <div class="sub">short-term · long-term unrealized</div>
+    </div>
+    <div class="card stat">
+      <div class="label">Est. tax if sold now</div>
+      <div class="value num">$7,820</div>
+      <div class="sub">fed $5,910 · NIIT $1,066 · CA $844</div>
+    </div>
+  </div>
+
+  <div class="grid dash mt16">
+    <!-- Value over time (mocked SVG; see DESIGN.md — needs a history endpoint in M7+) -->
+    <div class="card">
+      <div class="card-head">
+        <h2>Portfolio value</h2>
+        <div class="toggle"><button>1M</button><button class="on">6M</button><button>1Y</button><button>All</button></div>
+      </div>
+      <div class="card-body">
+        <svg viewBox="0 0 560 200" width="100%" height="200" preserveAspectRatio="none">
+          <defs>
+            <linearGradient id="g" x1="0" x2="0" y1="0" y2="1">
+              <stop offset="0%" stop-color="#1f6feb" stop-opacity="0.22"/>
+              <stop offset="100%" stop-color="#1f6feb" stop-opacity="0"/>
+            </linearGradient>
+          </defs>
+          <path d="M0,150 L60,140 L120,150 L180,120 L240,128 L300,96 L360,104 L420,70 L480,80 L540,46 L560,40
+                   L560,200 L0,200 Z" fill="url(#g)"/>
+          <path d="M0,150 L60,140 L120,150 L180,120 L240,128 L300,96 L360,104 L420,70 L480,80 L540,46 L560,40"
+                fill="none" stroke="#1f6feb" stroke-width="2.5"/>
+        </svg>
+        <div class="flex between faint" style="font-size:12px;margin-top:6px">
+          <span>Jan</span><span>Feb</span><span>Mar</span><span>Apr</span><span>May</span><span>Jun</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Allocation donut (mock) -->
+    <div class="card">
+      <div class="card-head"><h2>Allocation</h2></div>
+      <div class="card-body flex" style="gap:20px">
+        <svg width="120" height="120" viewBox="0 0 42 42">
+          <circle cx="21" cy="21" r="15.9" fill="none" stroke="var(--surface-2)" stroke-width="6"/>
+          <circle cx="21" cy="21" r="15.9" fill="none" stroke="#1f6feb" stroke-width="6" stroke-dasharray="42 58" stroke-dashoffset="25"/>
+          <circle cx="21" cy="21" r="15.9" fill="none" stroke="#1a8a55" stroke-width="6" stroke-dasharray="28 72" stroke-dashoffset="-17"/>
+          <circle cx="21" cy="21" r="15.9" fill="none" stroke="#b7791f" stroke-width="6" stroke-dasharray="18 82" stroke-dashoffset="-45"/>
+          <circle cx="21" cy="21" r="15.9" fill="none" stroke="#8a93a1" stroke-width="6" stroke-dasharray="12 88" stroke-dashoffset="-63"/>
+        </svg>
+        <div class="legend">
+          <div class="row"><span class="sw" style="background:#1f6feb"></span> Equity ETF · 42%</div>
+          <div class="row"><span class="sw" style="background:#1a8a55"></span> Tech stocks · 28%</div>
+          <div class="row"><span class="sw" style="background:#b7791f"></span> Bond ETF · 18%</div>
+          <div class="row"><span class="sw" style="background:#8a93a1"></span> Other · 12%</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Holdings — GET /api/holdings (HoldingView) -->
+  <div class="card mt16">
+    <div class="card-head"><h2>Holdings</h2><span class="api">GET /api/holdings</span></div>
+    <table>
+      <thead>
+        <tr>
+          <th>Security</th><th>Account</th><th class="r">Qty</th><th class="r">Price</th>
+          <th class="r">Market value</th><th class="r">Cost basis</th><th class="r">Unrealized</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="tick">VTI<span class="name">Vanguard Total Stock Market ETF</span></td>
+          <td class="muted">Brokerage</td>
+          <td class="r num">320</td><td class="r num">$262.40</td>
+          <td class="r num">$83,968</td><td class="r num">$68,100</td>
+          <td class="r num gain">+$15,868</td>
+        </tr>
+        <tr>
+          <td class="tick">NVDA<span class="name">NVIDIA Corp</span></td>
+          <td class="muted">Brokerage</td>
+          <td class="r num">140</td><td class="r num">$172.10</td>
+          <td class="r num">$24,094</td><td class="r num">$12,880</td>
+          <td class="r num gain">+$11,214</td>
+        </tr>
+        <tr>
+          <td class="tick">BND<span class="name">Vanguard Total Bond ETF</span></td>
+          <td class="muted">IRA</td>
+          <td class="r num">600</td><td class="r num">$72.05</td>
+          <td class="r num">$43,230</td><td class="r num">$45,900</td>
+          <td class="r num loss">−$2,670</td>
+        </tr>
+        <tr>
+          <td class="tick">AAPL<span class="name">Apple Inc</span></td>
+          <td class="muted">Brokerage</td>
+          <td class="r num">110</td><td class="r num">$231.80</td>
+          <td class="r num">$25,498</td><td class="r num">$19,250</td>
+          <td class="r num gain">+$6,248</td>
+        </tr>
+        <tr>
+          <td class="tick">ARKK<span class="name">ARK Innovation ETF</span></td>
+          <td class="muted">Brokerage</td>
+          <td class="r num">300</td><td class="r num">$48.20</td>
+          <td class="r num">$14,460</td><td class="r num">$18,300</td>
+          <td class="r num loss">−$3,840</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p class="foot">Estimates are decision-support, <strong>not tax advice</strong>. Federal + California only · v1.</p>
+</div>
+</body>
+</html>

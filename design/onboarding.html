@@ -1,0 +1,96 @@
+<!-- @dsCard group="Screens" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>TaxLossApp — Onboarding</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<div class="topbar">
+  <div class="brand"><span class="logo">T</span> TaxLossApp</div>
+  <div class="spacer"></div>
+  <span class="muted">Setup</span>
+</div>
+
+<div class="app" style="max-width: 720px;">
+  <div class="page-head">
+    <h1>Let's set up your portfolio</h1>
+    <p>Connect a brokerage, then tell us your tax situation so we can estimate gains accurately.</p>
+  </div>
+
+  <!-- Stepper -->
+  <div class="stepper">
+    <div class="step done"><span class="n">✓</span> Connect</div>
+    <div class="step-line"></div>
+    <div class="step active"><span class="n">2</span> Sync</div>
+    <div class="step-line"></div>
+    <div class="step"><span class="n">3</span> Tax profile</div>
+  </div>
+
+  <!-- STEP 1 — Connect (shown collapsed/complete here) -->
+  <div class="card mt16">
+    <div class="card-head"><h2>1 · Connect your brokerage</h2><span class="api">POST /api/plaid/link-token → Plaid Link → POST /api/plaid/exchange</span></div>
+    <div class="card-body">
+      <div class="flex between">
+        <div class="flex">
+          <div class="alert-ic lt">🔗</div>
+          <div>
+            <div style="font-weight:600">Fidelity Investments</div>
+            <div class="faint">Connected · 2 accounts · holdings + transactions imported</div>
+          </div>
+        </div>
+        <span class="chip gain dot">Connected</span>
+      </div>
+      <hr class="sep" />
+      <button class="btn">+ Connect another institution</button>
+      <p class="hint mt8">Opens Plaid Link. We never see your brokerage password — Plaid returns a
+        <span class="num">public_token</span> we exchange server-side for an encrypted access token.</p>
+    </div>
+  </div>
+
+  <!-- STEP 2 — Sync (active) -->
+  <div class="card mt16">
+    <div class="card-head"><h2>2 · Importing your data</h2><span class="api">exchange triggers initial sync → lots reconstructed (FIFO)</span></div>
+    <div class="card-body">
+      <div class="legend">
+        <div class="row"><span class="chip gain dot"></span> Imported 2 accounts</div>
+        <div class="row"><span class="chip gain dot"></span> Imported 38 holdings</div>
+        <div class="row"><span class="chip gain dot"></span> Imported 214 transactions</div>
+        <div class="row"><span class="chip st dot"></span> Reconstructing tax lots (FIFO)… <span class="faint">building holding periods &amp; cost basis</span></div>
+      </div>
+      <div style="height:8px;background:var(--surface-2);border-radius:999px;overflow:hidden;margin-top:14px">
+        <div style="width:80%;height:100%;background:var(--brand)"></div>
+      </div>
+      <p class="hint mt8">Plaid doesn't expose per-purchase tax lots, so we rebuild them from the
+        transaction feed. This powers holding-period &amp; gain/loss math.</p>
+    </div>
+  </div>
+
+  <!-- STEP 3 — Tax profile (upcoming, previewed) -->
+  <div class="card mt16">
+    <div class="card-head"><h2>3 · Your tax profile</h2><span class="api">PATCH /api/profile</span></div>
+    <div class="card-body">
+      <div class="field">
+        <label>Filing status</label>
+        <div class="radio-row">
+          <label class="radio-card sel"><div class="t">Single</div><div class="d">single</div></label>
+          <label class="radio-card"><div class="t">Married filing jointly</div><div class="d">married_filing_jointly</div></label>
+          <label class="radio-card"><div class="t">Married filing separately</div><div class="d">married_filing_separately</div></label>
+          <label class="radio-card"><div class="t">Head of household</div><div class="d">head_of_household</div></label>
+        </div>
+      </div>
+      <div class="field">
+        <label>Taxable income (excluding investment gains)</label>
+        <input class="input" value="$120,000" />
+        <div class="hint">Determines your federal LT bracket (0/15/20%), NIIT threshold, and CA ordinary rate.</div>
+      </div>
+      <button class="btn primary lg block">Finish setup →</button>
+    </div>
+  </div>
+
+  <p class="foot">Estimates are decision-support, <strong>not tax advice</strong>. Federal + California only in v1.</p>
+</div>
+</body>
+</html>
