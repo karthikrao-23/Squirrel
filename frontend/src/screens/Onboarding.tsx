@@ -38,7 +38,7 @@ export function Onboarding() {
     <>
       <div className="topbar">
         <div className="brand">
-          <span className="logo">T</span> TaxLossApp
+          <span className="logo">🐿️</span> Squirrel
         </div>
         <div className="spacer" />
         <span className="muted">Setup</span>
@@ -46,8 +46,8 @@ export function Onboarding() {
 
       <div className="app" style={{ maxWidth: 720 }}>
         <div className="page-head">
-          <h1>Let's set up your portfolio</h1>
-          <p>Connect a brokerage, then tell us your tax situation so we can estimate gains accurately.</p>
+          <h1>Squirrel away more of your gains 🐿️</h1>
+          <p>Connect a brokerage, then tell us your tax situation so Squirrel can time your sells and harvest losses.</p>
         </div>
 
         <div className="stepper">

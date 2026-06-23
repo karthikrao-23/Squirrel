@@ -158,7 +158,7 @@ export function Harvest() {
                   <span>After-tax proceeds</span>
                   <span className="num">{money(result.after_tax_proceeds)}</span>
                 </div>
-                <p className="hint mt8">Simulation only — TaxLossApp never places trades.</p>
+                <p className="hint mt8">Simulation only — Squirrel never places trades.</p>
               </div>
             )}
           </div>

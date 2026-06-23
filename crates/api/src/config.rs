@@ -86,7 +86,7 @@ fn parse_smtp() -> Option<SmtpConfig> {
         .and_then(|s| s.trim().parse().ok())
         .unwrap_or(587);
     let from = non_empty(std::env::var("SMTP_FROM").ok())
-        .unwrap_or_else(|| "alerts@taxlossapp.local".to_string());
+        .unwrap_or_else(|| "alerts@squirrel.local".to_string());
     Some(SmtpConfig {
         host,
         port,

@@ -9,7 +9,7 @@ export function TopBar() {
   return (
     <div className="topbar">
       <div className="brand">
-        <span className="logo">T</span> TaxLossApp
+        <span className="logo">🐿️</span> Squirrel
       </div>
       <nav className="nav">
         <NavLink to="/" end className={({ isActive }) => (isActive ? "active" : "")}>

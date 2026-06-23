@@ -61,7 +61,7 @@ body {
 .brand { font-weight: 700; font-size: 16px; letter-spacing: -.2px; display: flex; align-items: center; gap: 8px; }
 .brand .logo {
   width: 24px; height: 24px; border-radius: 6px;
-  background: linear-gradient(135deg, var(--brand), #4f9bff);
+  background: linear-gradient(135deg, #8a4f1f, #d98a3d);
   display: grid; place-items: center; color: #fff; font-size: 13px; font-weight: 800;
 }
 .nav { display: flex; gap: 4px; margin-left: 8px; }

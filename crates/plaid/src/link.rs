@@ -60,7 +60,7 @@ impl PlaidClient {
         self.post(
             "/link/token/create",
             LinkTokenCreateReq {
-                client_name: "TaxLossApp",
+                client_name: "Squirrel",
                 language: "en",
                 country_codes: ["US"],
                 user: LinkUser { client_user_id },
