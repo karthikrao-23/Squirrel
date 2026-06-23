@@ -1,4 +1,4 @@
-# TaxLossApp — M6 UI/UX Design
+# Squirrel — M6 UI/UX Design
 
 The **design gate** before the React build (M7). Four core screens are mocked as
 viewable HTML in [`design/`](./design/) and mapped here to the §5 API endpoints

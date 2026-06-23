@@ -94,11 +94,11 @@ pub async fn send_pending_emails(state: &AppState) -> anyhow::Result<usize> {
         return Ok(0);
     }
 
-    let mut body = String::from("TaxLossApp — new alerts:\n\n");
+    let mut body = String::from("Squirrel — new alerts:\n\n");
     for a in &pending {
         body.push_str(&format!("• {}\n  {}\n\n", a.title, a.message));
     }
-    let subject = format!("TaxLossApp: {} new alert(s)", pending.len());
+    let subject = format!("Squirrel: {} new alert(s)", pending.len());
     crate::email::send(smtp, &subject, body).await?;
 
     for a in &pending {

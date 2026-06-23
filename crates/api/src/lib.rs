@@ -1,4 +1,4 @@
-//! TaxLossApp HTTP API.
+//! Squirrel HTTP API.
 //!
 //! Exposed as a library (not just a binary) so integration tests can build the
 //! same router and app state the binary uses and drive it with in-process

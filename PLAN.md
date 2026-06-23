@@ -1,4 +1,4 @@
-# TaxLossApp — Implementation Plan
+# Squirrel — Implementation Plan
 
 A personal investment tracker built to **learn Rust** on the backend, designed to be
 productized later. This file is the source of truth for scope and direction — edit it freely.
