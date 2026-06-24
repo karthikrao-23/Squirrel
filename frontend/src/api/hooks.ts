@@ -16,6 +16,7 @@ import type {
 } from "./types";
 
 export const keys = {
+  me: ["me"] as const,
   profile: ["profile"] as const,
   accounts: ["accounts"] as const,
   holdings: ["holdings"] as const,
@@ -23,6 +24,53 @@ export const keys = {
   harvest: ["tax", "harvest"] as const,
   alerts: (unreadOnly: boolean) => ["alerts", { unreadOnly }] as const,
 };
+
+// ---- Auth ----
+type Credentials = { email: string; password: string };
+
+/** The current user, or an error (401 → `UnauthorizedError`) when not logged in.
+ *  Drives `<AuthGate>`. We never retry it: a 401 is an answer, not a failure. */
+export const useMe = () =>
+  useQuery({ queryKey: keys.me, queryFn: () => get<User>("/api/auth/me"), retry: false });
+
+export function useSignup() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Credentials) => post<User>("/api/auth/signup", body),
+    onSuccess: (user) => onAuthed(qc, user),
+  });
+}
+
+export function useLogin() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Credentials) => post<User>("/api/auth/login", body),
+    onSuccess: (user) => onAuthed(qc, user),
+  });
+}
+
+export function useLogout() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => post<void>("/api/auth/logout"),
+    onSuccess: () => qc.clear(),
+  });
+}
+
+export function useLogoutAll() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => post<void>("/api/auth/logout-all"),
+    onSuccess: () => qc.clear(),
+  });
+}
+
+/** After a successful login/signup: seed `me`, then drop every other cached
+ *  query so nothing from a previous user (or a logged-out state) lingers. */
+function onAuthed(qc: ReturnType<typeof useQueryClient>, user: User) {
+  qc.setQueryData(keys.me, user);
+  qc.invalidateQueries({ predicate: (q) => q.queryKey[0] !== "me" });
+}
 
 // ---- Profile ----
 export const useProfile = () =>

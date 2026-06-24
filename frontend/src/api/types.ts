@@ -25,10 +25,10 @@ export const FILING_STATUS_LABELS: Record<FilingStatus, string> = {
   head_of_household: "Head of household",
 };
 
-// GET/PATCH /api/profile
+// GET/PATCH /api/profile and GET /api/auth/me. `email` is NOT NULL since auth.
 export interface User {
   id: Uuid;
-  email: string | null;
+  email: string;
   filing_status: string;
   taxable_income: Dec;
   created_at: IsoDateTime;
