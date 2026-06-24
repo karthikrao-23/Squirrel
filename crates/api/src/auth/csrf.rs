@@ -28,6 +28,14 @@ pub async fn csrf_guard(State(state): State<AppState>, req: Request, next: Next)
         return next.run(req).await;
     }
 
+    // The CSRF guard protects *cookie*-authenticated mutations. The internal
+    // endpoints are authenticated by a bearer token (not a cookie) and are
+    // called by infrastructure that can't supply our header, so they're exempt.
+    // (A browser CSRF can't forge the bearer token, so skipping is safe.)
+    if req.uri().path().starts_with("/api/internal/") {
+        return next.run(req).await;
+    }
+
     let headers = req.headers();
 
     // 1. Required custom header.

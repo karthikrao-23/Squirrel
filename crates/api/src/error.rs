@@ -28,6 +28,11 @@ pub enum AppError {
     #[error("{0}")]
     Conflict(String),
 
+    /// Authenticated (or doesn't need a session) but not allowed here — e.g. a
+    /// dev-only endpoint hit in production.
+    #[error("{0}")]
+    Forbidden(String),
+
     #[error("not found")]
     NotFound,
 
@@ -42,6 +47,7 @@ impl IntoResponse for AppError {
             AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
             AppError::Unauthorized => StatusCode::UNAUTHORIZED,
             AppError::Conflict(_) => StatusCode::CONFLICT,
+            AppError::Forbidden(_) => StatusCode::FORBIDDEN,
             // Plaid is an upstream dependency, so its failures are a bad gateway.
             AppError::Plaid(_) => StatusCode::BAD_GATEWAY,
             AppError::Db(_) | AppError::Other(_) => StatusCode::INTERNAL_SERVER_ERROR,

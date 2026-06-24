@@ -4,6 +4,7 @@
 pub mod alerts;
 pub mod auth;
 pub mod health;
+pub mod internal;
 pub mod plaid;
 pub mod portfolio;
 pub mod profile;
@@ -17,6 +18,7 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .merge(health::router())
         .merge(auth::router())
+        .merge(internal::router())
         .merge(plaid::router())
         .merge(portfolio::router())
         .merge(profile::router())

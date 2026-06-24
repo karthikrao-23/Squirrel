@@ -5,10 +5,46 @@ use base64::Engine;
 use plaid::PlaidEnv;
 use rust_decimal::Decimal;
 
+/// Deployment environment — the single source of truth for security posture.
+/// `cookie_secure`, the prod startup guard, the sandbox-connect gate, and the
+/// scheduler default all derive from this (never from `PLAID_ENV`), so a Plaid
+/// config change can't accidentally move the security posture.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AppEnv {
+    Development,
+    Staging,
+    Production,
+}
+
+impl AppEnv {
+    /// Strict parse — an unrecognized value is a hard boot error. Unset is
+    /// handled by the caller (defaults to development for local convenience).
+    fn parse(s: &str) -> anyhow::Result<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "development" => Ok(AppEnv::Development),
+            "staging" => Ok(AppEnv::Staging),
+            "production" => Ok(AppEnv::Production),
+            other => Err(anyhow::anyhow!(
+                "invalid APP_ENV '{other}' (expected development|staging|production)"
+            )),
+        }
+    }
+
+    pub fn is_development(self) -> bool {
+        matches!(self, AppEnv::Development)
+    }
+}
+
+// NOTE: deliberately no `Debug`/`Serialize` derive — `Config` holds secrets
+// (Plaid creds, encryption key, internal token) and must never be logged or
+// serialized wholesale.
 #[derive(Clone)]
 pub struct Config {
+    pub app_env: AppEnv,
     pub database_url: String,
     pub bind_addr: String,
+    /// Cloud Run injects `PORT`; when set it wins over `bind_addr`.
+    pub port: Option<u16>,
     pub plaid_env: PlaidEnv,
     pub plaid_client_id: String,
     pub plaid_secret: String,
@@ -34,6 +70,12 @@ pub struct Config {
     /// guard to reject cross-site mutating requests. `None` in dev skips the
     /// Origin comparison (the required custom header still applies).
     pub app_origin: Option<String>,
+    /// Whether the in-process cron scheduler runs. Off in prod (Cloud Scheduler
+    /// drives the cycle via the internal endpoint); defaults on in development.
+    pub scheduler_enabled: bool,
+    /// Bearer token for the internal endpoint (`/api/internal/*`). Fallback when
+    /// Cloud Run OIDC isn't used; `None` means the endpoint is closed.
+    pub internal_api_token: Option<String>,
 }
 
 #[derive(Clone)]
@@ -50,10 +92,27 @@ pub struct SmtpConfig {
 
 impl Config {
     pub fn from_env() -> anyhow::Result<Self> {
+        // APP_ENV is the posture source of truth. Unset → development (so local
+        // dev needs no config); a *present but unrecognized* value is fatal.
+        let app_env = match non_empty(std::env::var("APP_ENV").ok()) {
+            Some(v) => AppEnv::parse(&v)?,
+            None => AppEnv::Development,
+        };
         let database_url = required("DATABASE_URL")?;
         let bind_addr = std::env::var("BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".to_string());
-        let plaid_env =
-            PlaidEnv::from_str_or_sandbox(&std::env::var("PLAID_ENV").unwrap_or_default());
+        let port = match non_empty(std::env::var("PORT").ok()) {
+            Some(v) => Some(
+                v.parse()
+                    .map_err(|_| anyhow::anyhow!("PORT must be a valid port number, got '{v}'"))?,
+            ),
+            None => None,
+        };
+        // Strict: a PLAID_ENV typo is fatal, not a silent downgrade. Unset
+        // defaults to sandbox (the safe environment).
+        let plaid_env = match non_empty(std::env::var("PLAID_ENV").ok()) {
+            Some(v) => PlaidEnv::parse(&v).map_err(|e| anyhow::anyhow!(e))?,
+            None => PlaidEnv::Sandbox,
+        };
         // Plaid creds are optional at M1 so the server still boots without them;
         // M2 endpoints will error clearly if they're unset.
         let plaid_client_id = std::env::var("PLAID_CLIENT_ID").unwrap_or_default();
@@ -70,16 +129,23 @@ impl Config {
             non_empty(std::env::var("ALERT_APPROACHING_WINDOW_DAYS").ok())
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(30);
-        // Posture: secure unless we're explicitly in local development. Default
-        // (unset APP_ENV) is development so the dev HTTP flow keeps working.
-        let app_env =
-            non_empty(std::env::var("APP_ENV").ok()).unwrap_or_else(|| "development".to_string());
-        let cookie_secure = app_env != "development";
+        // Posture derives from APP_ENV: cookies are Secure (and `__Host-`) for
+        // anything other than local development.
+        let cookie_secure = !app_env.is_development();
         let app_origin = non_empty(std::env::var("APP_ORIGIN").ok());
+        // Scheduler defaults on only in development; an explicit SCHEDULER_ENABLED
+        // overrides either way (prod sets it false; Cloud Scheduler drives prod).
+        let scheduler_enabled = match non_empty(std::env::var("SCHEDULER_ENABLED").ok()) {
+            Some(v) => parse_bool(&v)?,
+            None => app_env.is_development(),
+        };
+        let internal_api_token = non_empty(std::env::var("INTERNAL_API_TOKEN").ok());
 
-        Ok(Self {
+        let config = Self {
+            app_env,
             database_url,
             bind_addr,
+            port,
             plaid_env,
             plaid_client_id,
             plaid_secret,
@@ -91,7 +157,56 @@ impl Config {
             alert_approaching_window_days,
             cookie_secure,
             app_origin,
-        })
+            scheduler_enabled,
+            internal_api_token,
+        };
+        config.validate_for_prod()?;
+        Ok(config)
+    }
+
+    /// Fail fast on a production misconfiguration: secrets that *must* be present
+    /// and a posture that *must* be secure. Only enforced when `APP_ENV=production`
+    /// so dev/test stay frictionless.
+    fn validate_for_prod(&self) -> anyhow::Result<()> {
+        if self.app_env != AppEnv::Production {
+            return Ok(());
+        }
+        let mut missing = Vec::new();
+        if self.token_encryption_key.is_none() {
+            missing.push("TOKEN_ENCRYPTION_KEY");
+        }
+        if self.plaid_client_id.is_empty() {
+            missing.push("PLAID_CLIENT_ID");
+        }
+        if self.plaid_secret.is_empty() {
+            missing.push("PLAID_SECRET");
+        }
+        if self.internal_api_token.is_none() {
+            missing.push("INTERNAL_API_TOKEN");
+        }
+        if !missing.is_empty() {
+            return Err(anyhow::anyhow!(
+                "APP_ENV=production but required secrets are missing: {}",
+                missing.join(", ")
+            ));
+        }
+        // Belt-and-suspenders: cookie_secure is derived from app_env, so this
+        // can't be false in production — but assert it so the invariant is loud.
+        if !self.cookie_secure {
+            return Err(anyhow::anyhow!(
+                "APP_ENV=production requires secure cookies (cookie_secure must be true)"
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Parse a permissive boolean (`true/false/1/0/yes/no/on/off`).
+fn parse_bool(s: &str) -> anyhow::Result<bool> {
+    match s.trim().to_ascii_lowercase().as_str() {
+        "true" | "1" | "yes" | "on" => Ok(true),
+        "false" | "0" | "no" | "off" => Ok(false),
+        other => Err(anyhow::anyhow!("expected a boolean, got '{other}'")),
     }
 }
 
@@ -143,4 +258,69 @@ fn required(key: &str) -> anyhow::Result<String> {
 /// Treat empty/whitespace strings as absent.
 fn non_empty(v: Option<String>) -> Option<String> {
     v.map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn app_env_parses_strictly() {
+        assert_eq!(AppEnv::parse("production").unwrap(), AppEnv::Production);
+        assert_eq!(AppEnv::parse(" Development ").unwrap(), AppEnv::Development);
+        assert!(AppEnv::parse("prod").is_err());
+        assert!(AppEnv::parse("").is_err());
+    }
+
+    /// A minimal production config with everything required present.
+    fn prod_config() -> Config {
+        Config {
+            app_env: AppEnv::Production,
+            database_url: "postgres://x".into(),
+            bind_addr: "0.0.0.0:8080".into(),
+            port: None,
+            plaid_env: PlaidEnv::Production,
+            plaid_client_id: "id".into(),
+            plaid_secret: "secret".into(),
+            token_encryption_key: Some([0u8; 32]),
+            plaid_webhook_url: None,
+            smtp: None,
+            alert_cron: "0 0 * * * *".into(),
+            alert_min_tax_saving: Decimal::new(50, 0),
+            alert_approaching_window_days: 30,
+            cookie_secure: true,
+            app_origin: Some("https://squirrel.example".into()),
+            scheduler_enabled: false,
+            internal_api_token: Some("tok".into()),
+        }
+    }
+
+    #[test]
+    fn prod_guard_passes_when_complete() {
+        assert!(prod_config().validate_for_prod().is_ok());
+    }
+
+    #[test]
+    fn prod_guard_fails_on_missing_secret() {
+        let mut c = prod_config();
+        c.internal_api_token = None;
+        let err = c.validate_for_prod().unwrap_err().to_string();
+        assert!(err.contains("INTERNAL_API_TOKEN"), "{err}");
+    }
+
+    #[test]
+    fn prod_guard_fails_on_insecure_cookies() {
+        let mut c = prod_config();
+        c.cookie_secure = false;
+        assert!(c.validate_for_prod().is_err());
+    }
+
+    #[test]
+    fn non_prod_is_not_guarded() {
+        let mut c = prod_config();
+        c.app_env = AppEnv::Development;
+        c.token_encryption_key = None;
+        c.internal_api_token = None;
+        assert!(c.validate_for_prod().is_ok());
+    }
 }

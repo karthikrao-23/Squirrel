@@ -82,6 +82,13 @@ async fn sandbox_connect(
     user: AuthUser,
     body: Option<Json<SandboxConnectReq>>,
 ) -> Result<Json<ConnectResponse>, AppError> {
+    // The sandbox shortcut mints fake tokens; it must never be reachable outside
+    // local development (posture is driven by APP_ENV, not PLAID_ENV).
+    if !state.config.app_env.is_development() {
+        return Err(AppError::Forbidden(
+            "sandbox connect is only available in development".into(),
+        ));
+    }
     require_plaid(&state)?;
     let institution = body
         .and_then(|b| b.0.institution_id)

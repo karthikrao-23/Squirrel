@@ -20,8 +20,10 @@ use uuid::Uuid;
 
 fn test_config() -> api::config::Config {
     api::config::Config {
+        app_env: api::config::AppEnv::Development,
         database_url: String::new(),
         bind_addr: "127.0.0.1:0".into(),
+        port: None,
         plaid_env: plaid::PlaidEnv::Sandbox,
         plaid_client_id: String::new(),
         plaid_secret: String::new(),
@@ -35,18 +37,32 @@ fn test_config() -> api::config::Config {
         // the CSRF guard's foreign-Origin rejection is exercisable.
         cookie_secure: false,
         app_origin: Some("http://app.test".into()),
+        scheduler_enabled: false,
+        internal_api_token: None,
     }
 }
 
 fn app(pool: PgPool) -> Router {
-    api::build_app(api::state::AppState::new(pool, test_config()))
+    app_with(pool, test_config())
 }
 
-/// A request outcome: status, parsed JSON body, and any `Set-Cookie` headers.
+fn app_with(pool: PgPool, config: api::config::Config) -> Router {
+    api::build_app(api::state::AppState::new(pool, config))
+}
+
+/// A request outcome: status, parsed JSON body, `Set-Cookie` headers, and a
+/// lookup over response headers (lower-cased names).
 struct Resp {
     status: StatusCode,
     body: Value,
     set_cookies: Vec<String>,
+    headers: std::collections::HashMap<String, String>,
+}
+
+impl Resp {
+    fn header(&self, name: &str) -> Option<&str> {
+        self.headers.get(name).map(String::as_str)
+    }
 }
 
 /// Generic request driver. `cookie` is the raw `Cookie` header value (e.g.
@@ -60,11 +76,24 @@ async fn request(
     origin: Option<&str>,
     body: Option<Value>,
 ) -> Resp {
+    request_with_headers(app, method, uri, cookie, csrf, origin, body, &[]).await
+}
+
+/// Like [`request`] but allows arbitrary extra headers (e.g. `Authorization`).
+#[allow(clippy::too_many_arguments)]
+async fn request_with_headers(
+    app: &Router,
+    method: &str,
+    uri: &str,
+    cookie: Option<&str>,
+    csrf: bool,
+    origin: Option<&str>,
+    body: Option<Value>,
+    extra: &[(&str, &str)],
+) -> Resp {
     let mut builder = Request::builder()
         .method(method)
         .uri(uri)
-        // The auth rate limiter keys on X-Forwarded-For; supply one so the
-        // SmartIpKeyExtractor always has a key in tests.
         .header("x-forwarded-for", "127.0.0.1");
     if let Some(c) = cookie {
         builder = builder.header("cookie", c);
@@ -74,6 +103,9 @@ async fn request(
     }
     if let Some(o) = origin {
         builder = builder.header("origin", o);
+    }
+    for (k, v) in extra {
+        builder = builder.header(*k, *v);
     }
     let req = if let Some(b) = body {
         builder
@@ -92,6 +124,11 @@ async fn request(
         .iter()
         .map(|v| v.to_str().unwrap().to_string())
         .collect();
+    let headers = resp
+        .headers()
+        .iter()
+        .map(|(k, v)| (k.as_str().to_string(), v.to_str().unwrap_or("").to_string()))
+        .collect();
     let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
         .await
         .unwrap();
@@ -104,6 +141,7 @@ async fn request(
         status,
         body,
         set_cookies,
+        headers,
     }
 }
 
@@ -841,4 +879,121 @@ async fn same_institution_two_users_keep_separate_rows(pool: PgPool) {
         a_accts.body["accounts"][0]["id"], b_accts.body["accounts"][0]["id"],
         "the two users' accounts are distinct rows"
     );
+}
+
+// ============================ Prod config (Part C) ===========================
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn security_headers_present(pool: PgPool) {
+    // Dev config (cookie_secure=false) → no HSTS, but the other headers apply.
+    let app = app(pool);
+    let resp = request(&app, "GET", "/health", None, false, None, None).await;
+    assert_eq!(resp.header("x-content-type-options"), Some("nosniff"));
+    assert_eq!(resp.header("referrer-policy"), Some("same-origin"));
+    assert!(resp
+        .header("content-security-policy")
+        .unwrap()
+        .contains("frame-ancestors 'none'"));
+    // HSTS is HTTPS-only, so it must be absent in development.
+    assert_eq!(resp.header("strict-transport-security"), None);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn hsts_present_in_secure_posture(pool: PgPool) {
+    let mut cfg = test_config();
+    cfg.cookie_secure = true; // staging/prod posture
+    let app = app_with(pool, cfg);
+    let resp = request(&app, "GET", "/health", None, false, None, None).await;
+    assert!(resp
+        .header("strict-transport-security")
+        .unwrap()
+        .contains("max-age="));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn sandbox_connect_forbidden_outside_development(pool: PgPool) {
+    let mut cfg = test_config();
+    cfg.app_env = api::config::AppEnv::Staging;
+    let app = app_with(pool, cfg);
+    let (cookie, _) = auth(&app, "sandbox@example.com").await;
+    // 403 fires on the env gate, before any Plaid config check.
+    let resp = request(
+        &app,
+        "POST",
+        "/api/plaid/sandbox/connect",
+        Some(&cookie),
+        true,
+        None,
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(resp.status, StatusCode::FORBIDDEN);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn internal_endpoint_requires_bearer_token(pool: PgPool) {
+    let mut cfg = test_config();
+    cfg.internal_api_token = Some("s3cr3t-internal-token".into());
+    let app = app_with(pool, cfg);
+
+    // No Authorization header → 401.
+    let resp = request(
+        &app,
+        "POST",
+        "/api/internal/alerts/run",
+        None,
+        false,
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(resp.status, StatusCode::UNAUTHORIZED);
+
+    // Wrong token → 401.
+    let resp = request_with_headers(
+        &app,
+        "POST",
+        "/api/internal/alerts/run",
+        None,
+        false,
+        None,
+        None,
+        &[("authorization", "Bearer wrong-token")],
+    )
+    .await;
+    assert_eq!(resp.status, StatusCode::UNAUTHORIZED);
+
+    // Correct token → 200 with a cycle summary. Note: no CSRF header is sent,
+    // proving the internal routes are exempt from the CSRF guard.
+    let resp = request_with_headers(
+        &app,
+        "POST",
+        "/api/internal/alerts/run",
+        None,
+        false,
+        None,
+        None,
+        &[("authorization", "Bearer s3cr3t-internal-token")],
+    )
+    .await;
+    assert_eq!(resp.status, StatusCode::OK);
+    assert!(resp.body.get("alerts_created").is_some());
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn internal_endpoint_closed_when_unconfigured(pool: PgPool) {
+    // No internal token configured → endpoint is closed even with a bearer.
+    let app = app(pool);
+    let resp = request_with_headers(
+        &app,
+        "POST",
+        "/api/internal/alerts/run",
+        None,
+        false,
+        None,
+        None,
+        &[("authorization", "Bearer anything")],
+    )
+    .await;
+    assert_eq!(resp.status, StatusCode::UNAUTHORIZED);
 }
