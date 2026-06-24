@@ -14,6 +14,7 @@ pub mod lots;
 pub mod routes;
 pub mod state;
 pub mod sync;
+pub mod webhook_verify;
 
 use std::time::Duration;
 
