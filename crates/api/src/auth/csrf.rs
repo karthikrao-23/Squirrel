@@ -28,11 +28,14 @@ pub async fn csrf_guard(State(state): State<AppState>, req: Request, next: Next)
         return next.run(req).await;
     }
 
-    // The CSRF guard protects *cookie*-authenticated mutations. The internal
-    // endpoints are authenticated by a bearer token (not a cookie) and are
-    // called by infrastructure that can't supply our header, so they're exempt.
-    // (A browser CSRF can't forge the bearer token, so skipping is safe.)
-    if req.uri().path().starts_with("/api/internal/") {
+    // The CSRF guard protects *cookie*-authenticated mutations. These routes use
+    // a different, non-cookie credential and are called by infrastructure /
+    // Plaid that can't supply our header, so they're exempt:
+    //   - `/api/internal/*`     — bearer token
+    //   - `/api/plaid/webhook`  — Plaid's signed `Plaid-Verification` JWT
+    // (A browser CSRF can forge neither credential, so skipping is safe.)
+    let path = req.uri().path();
+    if path.starts_with("/api/internal/") || path == "/api/plaid/webhook" {
         return next.run(req).await;
     }
 

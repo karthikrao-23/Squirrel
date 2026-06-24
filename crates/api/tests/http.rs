@@ -981,6 +981,41 @@ async fn internal_endpoint_requires_bearer_token(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn webhook_rejects_unsigned_and_is_csrf_exempt(pool: PgPool) {
+    let app = app(pool);
+    // No Plaid-Verification header and no CSRF header. If the webhook weren't
+    // CSRF-exempt we'd get 403; instead we reach signature verification, which
+    // rejects the unsigned body → 401. (A 401 here proves both: wired + exempt.)
+    let resp = request(
+        &app,
+        "POST",
+        "/api/plaid/webhook",
+        None,
+        false,
+        None,
+        Some(
+            json!({ "webhook_type": "HOLDINGS", "webhook_code": "DEFAULT_UPDATE", "item_id": "x" }),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status, StatusCode::UNAUTHORIZED);
+
+    // A bogus verification header is likewise rejected.
+    let resp = request_with_headers(
+        &app,
+        "POST",
+        "/api/plaid/webhook",
+        None,
+        false,
+        None,
+        Some(json!({ "webhook_type": "HOLDINGS" })),
+        &[("plaid-verification", "not-a-jwt")],
+    )
+    .await;
+    assert_eq!(resp.status, StatusCode::UNAUTHORIZED);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn internal_endpoint_closed_when_unconfigured(pool: PgPool) {
     // No internal token configured → endpoint is closed even with a bearer.
     let app = app(pool);

@@ -6,8 +6,9 @@
 //!   without a frontend (sandbox only)
 //! - `POST /api/plaid/webhook`      → Plaid pings us when data changes; re-sync
 
+use axum::body::Bytes;
 use axum::extract::State;
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::routing::post;
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
@@ -101,22 +102,45 @@ async fn sandbox_connect(
     Ok(Json(resp))
 }
 
-/// `POST /api/plaid/webhook` — always answer 200 (Plaid retries otherwise);
-/// errors are logged, not surfaced. Signature verification is deferred to M8.
-async fn webhook(
-    State(state): State<AppState>,
-    Json(hook): Json<plaid::webhooks::PlaidWebhook>,
-) -> StatusCode {
+/// `POST /api/plaid/webhook` — the only public mutating route, so it's verified
+/// by Plaid's `Plaid-Verification` JWT signature (ES256) over the raw body. Any
+/// verification failure → 401 and nothing is acted on. Takes raw `Bytes` because
+/// the signature covers the exact byte string (parsing first would lose it).
+async fn webhook(State(state): State<AppState>, headers: HeaderMap, body: Bytes) -> StatusCode {
+    let verification = headers
+        .get("plaid-verification")
+        .and_then(|v| v.to_str().ok());
+
+    let hook = match state
+        .webhook_verifier
+        .verify_and_parse(&state.plaid, verification, &body)
+        .await
+    {
+        Ok(hook) => hook,
+        Err(e) => {
+            // Don't leak which check failed; log server-side, return a flat 401.
+            tracing::warn!(error = %e, "plaid webhook verification failed");
+            return StatusCode::UNAUTHORIZED;
+        }
+    };
+
     tracing::info!(
         webhook_type = %hook.webhook_type,
         webhook_code = %hook.webhook_code,
         item = %hook.item_id,
-        "plaid webhook received"
+        "plaid webhook verified"
     );
 
     if hook.is_investments_update() {
-        if let Err(e) = resync_item(&state, &hook.item_id).await {
-            tracing::error!(error = %e, item = %hook.item_id, "webhook re-sync failed");
+        // Dedupe: collapse a burst of webhooks for the same item into one sync.
+        if state.try_claim_sync(&hook.item_id) {
+            let result = resync_item(&state, &hook.item_id).await;
+            state.release_sync(&hook.item_id);
+            if let Err(e) = result {
+                tracing::error!(error = %e, item = %hook.item_id, "webhook re-sync failed");
+            }
+        } else {
+            tracing::info!(item = %hook.item_id, "sync already in flight; skipping duplicate webhook");
         }
     }
     StatusCode::OK
@@ -147,19 +171,23 @@ async fn connect_with_public_token(
     })
 }
 
-/// Re-sync an existing item by Plaid item id (webhook path).
+/// Re-sync every item with this Plaid item id (webhook path). Because the id is
+/// unique only per user now, the same id can map to one item per user (sandbox);
+/// we re-sync each so one user's webhook never touches another user's data.
 async fn resync_item(state: &AppState, plaid_item_id: &str) -> anyhow::Result<()> {
     let key = state
         .config
         .token_encryption_key
         .ok_or_else(|| anyhow::anyhow!("TOKEN_ENCRYPTION_KEY not configured"))?;
-    let Some(item) =
-        db::queries::plaid_items::find_by_plaid_item_id(&state.db, plaid_item_id).await?
-    else {
+    let items =
+        db::queries::plaid_items::find_all_by_plaid_item_id(&state.db, plaid_item_id).await?;
+    if items.is_empty() {
         tracing::warn!(item = %plaid_item_id, "webhook for unknown item; ignoring");
         return Ok(());
-    };
-    sync::sync_item(&state.db, &state.plaid, &key, &item).await?;
+    }
+    for item in &items {
+        sync::sync_item(&state.db, &state.plaid, &key, item).await?;
+    }
     Ok(())
 }
 

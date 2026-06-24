@@ -35,14 +35,19 @@ pub async fn upsert(
     .await
 }
 
-/// Look up an item by Plaid's item id (used when a webhook arrives).
-pub async fn find_by_plaid_item_id(
+/// Look up every item with this Plaid item id (used when a webhook arrives).
+///
+/// Returns a `Vec` because `plaid_item_id` is only unique *per user* now
+/// (`UNIQUE (user_id, plaid_item_id)`): in sandbox two users connecting the same
+/// institution share an id, so a webhook for it must re-sync each owner's item.
+/// In production a real item id belongs to one user, so this is usually one row.
+pub async fn find_all_by_plaid_item_id(
     pool: &PgPool,
     plaid_item_id: &str,
-) -> sqlx::Result<Option<PlaidItem>> {
+) -> sqlx::Result<Vec<PlaidItem>> {
     sqlx::query_as::<_, PlaidItem>("SELECT * FROM plaid_items WHERE plaid_item_id = $1")
         .bind(plaid_item_id)
-        .fetch_optional(pool)
+        .fetch_all(pool)
         .await
 }
 

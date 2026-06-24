@@ -30,6 +30,7 @@ sha2 = { workspace = true }
 subtle = { workspace = true }
 email_address = { workspace = true }
 unicode-normalization = { workspace = true }
+jsonwebtoken = { workspace = true }
 tokio-cron-scheduler = { workspace = true }
 lettre = { workspace = true }
 

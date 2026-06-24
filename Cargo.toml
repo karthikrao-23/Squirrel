@@ -63,6 +63,8 @@ axum-extra = { version = "0.10", features = ["cookie"] }
 subtle = "2"
 email_address = "0.2"
 unicode-normalization = "0.1"
+# Plaid webhook signature verification (ES256 JWT).
+jsonwebtoken = "9"
 tokio-cron-scheduler = "0.13"
 lettre = { version = "0.11", default-features = false, features = [
     "builder",
