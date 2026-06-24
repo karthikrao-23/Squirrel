@@ -28,7 +28,7 @@ pub async fn upsert(
         r#"
         INSERT INTO accounts (user_id, plaid_item_id, plaid_account_id, name, official_name, type, subtype)
         VALUES ($1, $2, $3, $4, $5, $6, $7)
-        ON CONFLICT (plaid_account_id) DO UPDATE
+        ON CONFLICT (user_id, plaid_account_id) DO UPDATE
         SET name = EXCLUDED.name,
             official_name = EXCLUDED.official_name,
             type = EXCLUDED.type,

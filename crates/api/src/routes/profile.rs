@@ -7,6 +7,7 @@ use axum::{Json, Router};
 use rust_decimal::Decimal;
 use serde::Deserialize;
 
+use crate::auth::AuthUser;
 use crate::error::AppError;
 use crate::state::AppState;
 use db::models::User;
@@ -23,9 +24,8 @@ pub fn router() -> Router<AppState> {
     Router::new().route("/api/profile", get(get_profile).patch(update_profile))
 }
 
-async fn get_profile(State(state): State<AppState>) -> Result<Json<User>, AppError> {
-    let user = db::queries::users::ensure_default(&state.db).await?;
-    Ok(Json(user))
+async fn get_profile(user: AuthUser) -> Result<Json<User>, AppError> {
+    Ok(Json(user.0))
 }
 
 #[derive(Deserialize)]
@@ -36,9 +36,10 @@ struct ProfileUpdate {
 
 async fn update_profile(
     State(state): State<AppState>,
+    user: AuthUser,
     Json(body): Json<ProfileUpdate>,
 ) -> Result<Json<User>, AppError> {
-    let current = db::queries::users::ensure_default(&state.db).await?;
+    let current = user.0;
 
     // Apply provided fields over the current values (partial update).
     let filing_status = body.filing_status.unwrap_or(current.filing_status);

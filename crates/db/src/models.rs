@@ -2,20 +2,59 @@
 //! SQLx can map query results directly, and `Serialize` so handlers can return
 //! them as JSON.
 
+use std::fmt;
+
 use chrono::{DateTime, NaiveDate, Utc};
 use rust_decimal::Decimal;
 use serde::Serialize;
 use sqlx::FromRow;
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Serialize, FromRow)]
+#[derive(Clone, Serialize, FromRow)]
 pub struct User {
     pub id: Uuid,
-    pub email: Option<String>,
+    pub email: String,
     pub filing_status: String,
     pub taxable_income: Decimal,
+    // Argon2id PHC string. Nullable: legacy/seed rows may have none, in which
+    // case authentication is impossible (never treated as a match). Never
+    // serialized into a response.
+    #[serde(skip_serializing)]
+    pub password_hash: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+// Hand-rolled so a stray `tracing::debug!(?user)` can't leak the password hash.
+// We redact it explicitly rather than deriving `Debug`.
+impl fmt::Debug for User {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("User")
+            .field("id", &self.id)
+            .field("email", &self.email)
+            .field("filing_status", &self.filing_status)
+            .field("taxable_income", &self.taxable_income)
+            .field(
+                "password_hash",
+                &self.password_hash.as_ref().map(|_| "<redacted>"),
+            )
+            .field("created_at", &self.created_at)
+            .field("updated_at", &self.updated_at)
+            .finish()
+    }
+}
+
+/// A login session. We persist only the SHA-256 of the opaque token (`token_hash`);
+/// the raw token lives solely in the user's cookie.
+#[derive(Debug, Clone, Serialize, FromRow)]
+pub struct Session {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    #[serde(skip_serializing)]
+    pub token_hash: Vec<u8>,
+    pub created_at: DateTime<Utc>,
+    pub last_used_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, FromRow)]

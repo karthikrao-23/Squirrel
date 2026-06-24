@@ -19,8 +19,15 @@ pub enum AppError {
     #[error("{0}")]
     BadRequest(String),
 
-    // Constructed by resource endpoints starting in M3.
-    #[allow(dead_code)]
+    /// Missing/invalid/expired session. Body is a fixed generic message so it
+    /// can't be used to distinguish "no session" from "bad credentials".
+    #[error("unauthorized")]
+    Unauthorized,
+
+    /// A uniqueness conflict the client can resolve (e.g. email already taken).
+    #[error("{0}")]
+    Conflict(String),
+
     #[error("not found")]
     NotFound,
 
@@ -33,6 +40,8 @@ impl IntoResponse for AppError {
         let status = match &self {
             AppError::NotFound => StatusCode::NOT_FOUND,
             AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
+            AppError::Unauthorized => StatusCode::UNAUTHORIZED,
+            AppError::Conflict(_) => StatusCode::CONFLICT,
             // Plaid is an upstream dependency, so its failures are a bad gateway.
             AppError::Plaid(_) => StatusCode::BAD_GATEWAY,
             AppError::Db(_) | AppError::Other(_) => StatusCode::INTERNAL_SERVER_ERROR,
@@ -41,6 +50,15 @@ impl IntoResponse for AppError {
         if status == StatusCode::INTERNAL_SERVER_ERROR {
             tracing::error!(error = %self, "request failed");
         }
-        (status, Json(json!({ "error": self.to_string() }))).into_response()
+        // Don't leak upstream (Plaid) internals to the client; log them above and
+        // return a generic body. Other arms expose their own (safe) message.
+        let body = match &self {
+            AppError::Plaid(e) => {
+                tracing::error!(error = %e, "plaid upstream error");
+                "upstream error".to_string()
+            }
+            other => other.to_string(),
+        };
+        (status, Json(json!({ "error": body }))).into_response()
     }
 }

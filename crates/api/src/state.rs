@@ -2,6 +2,8 @@
 //! the pool is reference-counted and the Plaid client wraps a reusable HTTP
 //! client.
 
+use std::sync::Arc;
+
 use plaid::PlaidClient;
 use sqlx::PgPool;
 
@@ -11,9 +13,11 @@ use crate::config::Config;
 pub struct AppState {
     pub db: PgPool,
     pub plaid: PlaidClient,
-    // Read by Plaid/portfolio handlers from M2 onward.
-    #[allow(dead_code)]
     pub config: Config,
+    /// A real argon2 hash of a throwaway password, built once at startup. The
+    /// login path verifies against it when the email is unknown so that
+    /// "no such user" costs the same as "wrong password" (timing parity).
+    pub dummy_password_hash: Arc<str>,
 }
 
 impl AppState {
@@ -23,6 +27,12 @@ impl AppState {
             config.plaid_client_id.clone(),
             config.plaid_secret.clone(),
         );
-        Self { db, plaid, config }
+        let dummy_password_hash = Arc::from(crate::auth::password::dummy_hash());
+        Self {
+            db,
+            plaid,
+            config,
+            dummy_password_hash,
+        }
     }
 }

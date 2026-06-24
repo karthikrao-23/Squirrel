@@ -8,6 +8,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
+use crate::auth::AuthUser;
 use crate::error::AppError;
 use crate::state::AppState;
 
@@ -26,29 +27,33 @@ struct ListQuery {
 
 async fn list(
     State(state): State<AppState>,
+    user: AuthUser,
     Query(q): Query<ListQuery>,
 ) -> Result<Json<Value>, AppError> {
-    let user = db::queries::users::ensure_default(&state.db).await?;
-    let alerts = db::queries::alerts::list(&state.db, user.id, q.unread_only).await?;
+    let alerts = db::queries::alerts::list(&state.db, user.0.id, q.unread_only).await?;
     Ok(Json(json!({ "alerts": alerts })))
 }
 
 async fn mark_read(
     State(state): State<AppState>,
+    user: AuthUser,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, AppError> {
-    let user = db::queries::users::ensure_default(&state.db).await?;
-    let changed = db::queries::alerts::mark_read(&state.db, user.id, id).await?;
+    // `mark_read` scopes by user_id, so marking another user's alert simply
+    // changes nothing → 404 (no cross-tenant write, no existence leak beyond it).
+    let changed = db::queries::alerts::mark_read(&state.db, user.0.id, id).await?;
     if !changed {
         return Err(AppError::NotFound);
     }
     Ok(Json(json!({ "ok": true })))
 }
 
-/// Run the alert rules now and return how many new alerts were created (and
-/// emails sent, if SMTP is configured).
-async fn evaluate(State(state): State<AppState>) -> Result<Json<Value>, AppError> {
-    let created = crate::alert_engine::evaluate_and_store(&state).await?;
-    let emailed = crate::alert_engine::send_pending_emails(&state).await?;
-    Ok(Json(json!({ "created": created, "emailed": emailed })))
+/// Run the alert cycle for the calling user and return how many new alerts were
+/// created (and emails sent, if SMTP is configured).
+async fn evaluate(State(state): State<AppState>, user: AuthUser) -> Result<Json<Value>, AppError> {
+    let summary = crate::alert_engine::run_cycle_for_user(&state, &user.0).await?;
+    Ok(Json(json!({
+        "created": summary.alerts_created,
+        "emailed": summary.emails_sent,
+    })))
 }

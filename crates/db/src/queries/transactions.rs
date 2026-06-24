@@ -119,7 +119,7 @@ pub async fn insert_ignore(pool: &PgPool, tx: &NewTransaction<'_>) -> sqlx::Resu
             (user_id, account_id, security_id, plaid_investment_transaction_id,
              type, subtype, quantity, price, amount, fees, date, name, currency)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-        ON CONFLICT (plaid_investment_transaction_id) DO NOTHING
+        ON CONFLICT (user_id, plaid_investment_transaction_id) DO NOTHING
         "#,
     )
     .bind(tx.user_id)

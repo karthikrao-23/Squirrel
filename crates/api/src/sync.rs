@@ -182,8 +182,9 @@ pub async fn sync_item(
         }
     }
 
-    // Transactions changed, so derived tax lots are stale — rebuild them.
-    crate::lots::rebuild_lots(pool).await?;
+    // Transactions changed, so derived tax lots are stale — rebuild them for the
+    // item's owner (never a default/global user).
+    crate::lots::rebuild_lots(pool, item.user_id).await?;
 
     tracing::info!(?summary, item = %item.plaid_item_id, "sync complete");
     Ok(summary)

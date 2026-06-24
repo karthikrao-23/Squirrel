@@ -2,6 +2,7 @@
 //! are merged in here as later milestones land.
 
 pub mod alerts;
+pub mod auth;
 pub mod health;
 pub mod plaid;
 pub mod portfolio;
@@ -15,6 +16,7 @@ use crate::state::AppState;
 pub fn router(state: AppState) -> Router {
     Router::new()
         .merge(health::router())
+        .merge(auth::router())
         .merge(plaid::router())
         .merge(portfolio::router())
         .merge(profile::router())

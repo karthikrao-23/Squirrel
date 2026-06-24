@@ -8,6 +8,7 @@ pub mod alerts;
 pub mod holdings;
 pub mod plaid_items;
 pub mod securities;
+pub mod sessions;
 pub mod tax_lots;
 pub mod transactions;
 pub mod users;

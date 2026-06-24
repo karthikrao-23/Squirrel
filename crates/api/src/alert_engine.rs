@@ -1,12 +1,13 @@
 //! Alert orchestration: glue between stored data, the pure `domain::alerts`
 //! rules, the `alerts` table, and email delivery.
 //!
-//! - [`evaluate_and_store`] runs the rules over current lots and persists any new
-//!   (deduplicated) alerts.
-//! - [`send_pending_emails`] emails a digest of not-yet-sent alerts.
-//! - [`run_cycle`] is what the scheduler calls: refresh prices, evaluate, email.
+//! Everything is **per user**: the engine never touches a "default"/global
+//! identity, and alert emails go to the owning user's own address — never a
+//! shared inbox. `run_cycle_all_users` fans out over every user for the
+//! scheduler/internal-cron path; a single user's failure can't abort the rest.
 
 use chrono::{Duration, Utc};
+use db::models::User;
 use domain::alerts::{self, AlertConfig, AlertInput};
 use serde::Serialize;
 use std::collections::HashSet;
@@ -24,10 +25,9 @@ pub struct CycleSummary {
     pub emails_sent: usize,
 }
 
-/// Evaluate the alert rules against the user's current lots and store any new
+/// Evaluate the alert rules against one user's current lots and store any new
 /// alerts (dedup-aware). Returns how many were created.
-pub async fn evaluate_and_store(state: &AppState) -> anyhow::Result<usize> {
-    let user = db::queries::users::ensure_default(&state.db).await?;
+pub async fn evaluate_and_store_for_user(state: &AppState, user: &User) -> anyhow::Result<usize> {
     let status = domain::FilingStatus::from_db_str(&user.filing_status);
     let as_of = Utc::now().date_naive();
 
@@ -78,17 +78,17 @@ pub async fn evaluate_and_store(state: &AppState) -> anyhow::Result<usize> {
             created += 1;
         }
     }
-    tracing::info!(created, evaluated = candidates.len(), "alerts evaluated");
+    tracing::info!(user = %user.id, created, evaluated = candidates.len(), "alerts evaluated");
     Ok(created)
 }
 
-/// Email a digest of any alerts not yet emailed. No-op (returns 0) when SMTP is
-/// not configured. Each alert is marked emailed on success.
-pub async fn send_pending_emails(state: &AppState) -> anyhow::Result<usize> {
+/// Email a digest of a user's not-yet-emailed alerts **to that user's address**.
+/// No-op (returns 0) when SMTP is not configured or nothing is pending. Each
+/// alert is marked emailed on success.
+pub async fn send_pending_emails_for_user(state: &AppState, user: &User) -> anyhow::Result<usize> {
     let Some(smtp) = state.config.smtp.as_ref() else {
         return Ok(0);
     };
-    let user = db::queries::users::ensure_default(&state.db).await?;
     let pending = db::queries::alerts::list_unemailed(&state.db, user.id).await?;
     if pending.is_empty() {
         return Ok(0);
@@ -99,24 +99,24 @@ pub async fn send_pending_emails(state: &AppState) -> anyhow::Result<usize> {
         body.push_str(&format!("• {}\n  {}\n\n", a.title, a.message));
     }
     let subject = format!("Squirrel: {} new alert(s)", pending.len());
-    crate::email::send(smtp, &subject, body).await?;
+    // Recipient is the user's own email — not a global ALERT_EMAIL_TO.
+    crate::email::send(smtp, &user.email, &subject, body).await?;
 
     for a in &pending {
         db::queries::alerts::mark_emailed(&state.db, a.id).await?;
     }
-    tracing::info!(sent = pending.len(), "alert email sent");
+    tracing::info!(user = %user.id, sent = pending.len(), "alert email sent");
     Ok(pending.len())
 }
 
-/// Full scheduled cycle: refresh prices from Plaid (best-effort), evaluate alert
-/// rules, then email any pending alerts.
-pub async fn run_cycle(state: &AppState) -> anyhow::Result<CycleSummary> {
+/// Full cycle for one user: refresh that user's prices from Plaid (best-effort),
+/// evaluate alert rules, then email any pending alerts to them.
+pub async fn run_cycle_for_user(state: &AppState, user: &User) -> anyhow::Result<CycleSummary> {
     let mut summary = CycleSummary::default();
 
-    // 1. Refresh prices by re-syncing each linked item (only if Plaid is usable).
+    // 1. Refresh prices by re-syncing each of the user's items (Plaid permitting).
     if state.plaid.is_configured() {
         if let Some(key) = state.config.token_encryption_key {
-            let user = db::queries::users::ensure_default(&state.db).await?;
             let items = db::queries::plaid_items::list_for_user(&state.db, user.id).await?;
             for item in &items {
                 match crate::sync::sync_item(&state.db, &state.plaid, &key, item).await {
@@ -130,9 +130,40 @@ pub async fn run_cycle(state: &AppState) -> anyhow::Result<CycleSummary> {
     }
 
     // 2. Evaluate + 3. email.
-    summary.alerts_created = evaluate_and_store(state).await?;
-    summary.emails_sent = send_pending_emails(state).await?;
+    summary.alerts_created = evaluate_and_store_for_user(state, user).await?;
+    summary.emails_sent = send_pending_emails_for_user(state, user).await?;
 
-    tracing::info!(?summary, "alert cycle complete");
+    tracing::info!(user = %user.id, ?summary, "alert cycle complete");
     Ok(summary)
+}
+
+/// Run the cycle for **every** user (scheduler / internal-cron entry point). One
+/// user's failure is logged and skipped so it can't stop the others. Also reaps
+/// expired sessions, since the in-process scheduler is off in production and
+/// this hourly cycle is the only thing that runs there.
+pub async fn run_cycle_all_users(state: &AppState) -> anyhow::Result<CycleSummary> {
+    let mut total = CycleSummary::default();
+
+    let users = db::queries::users::list_all(&state.db).await?;
+    for user in &users {
+        match run_cycle_for_user(state, user).await {
+            Ok(s) => {
+                total.items_synced += s.items_synced;
+                total.alerts_created += s.alerts_created;
+                total.emails_sent += s.emails_sent;
+            }
+            Err(e) => {
+                tracing::error!(user = %user.id, error = %e, "alert cycle failed for user")
+            }
+        }
+    }
+
+    match db::queries::sessions::delete_expired(&state.db).await {
+        Ok(n) if n > 0 => tracing::info!(reaped = n, "expired sessions reaped"),
+        Ok(_) => {}
+        Err(e) => tracing::error!(error = %e, "expired-session reap failed"),
+    }
+
+    tracing::info!(users = users.len(), ?total, "all-user alert cycle complete");
+    Ok(total)
 }

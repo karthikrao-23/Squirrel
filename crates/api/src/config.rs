@@ -25,6 +25,15 @@ pub struct Config {
     pub alert_min_tax_saving: Decimal,
     /// Flag gains within this many days of becoming long-term.
     pub alert_approaching_window_days: i64,
+    /// Whether session cookies get the `Secure` attribute (and the `__Host-`
+    /// name prefix). False only in local development (plain HTTP). Derived from
+    /// `APP_ENV`: anything other than `development` is treated as secure.
+    /// (Part C will promote this to a strict `APP_ENV` enum + startup guard.)
+    pub cookie_secure: bool,
+    /// The app's own origin (e.g. `https://squirrel.example`), used by the CSRF
+    /// guard to reject cross-site mutating requests. `None` in dev skips the
+    /// Origin comparison (the required custom header still applies).
+    pub app_origin: Option<String>,
 }
 
 #[derive(Clone)]
@@ -34,7 +43,9 @@ pub struct SmtpConfig {
     pub username: Option<String>,
     pub password: Option<String>,
     pub from: String,
-    pub to: String,
+    /// Optional dev-only fallback recipient. Real alert mail goes to each user's
+    /// own address (`user.email`); this is never used to send a user's alerts.
+    pub to: Option<String>,
 }
 
 impl Config {
@@ -59,6 +70,12 @@ impl Config {
             non_empty(std::env::var("ALERT_APPROACHING_WINDOW_DAYS").ok())
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(30);
+        // Posture: secure unless we're explicitly in local development. Default
+        // (unset APP_ENV) is development so the dev HTTP flow keeps working.
+        let app_env =
+            non_empty(std::env::var("APP_ENV").ok()).unwrap_or_else(|| "development".to_string());
+        let cookie_secure = app_env != "development";
+        let app_origin = non_empty(std::env::var("APP_ORIGIN").ok());
 
         Ok(Self {
             database_url,
@@ -72,15 +89,18 @@ impl Config {
             alert_cron,
             alert_min_tax_saving,
             alert_approaching_window_days,
+            cookie_secure,
+            app_origin,
         })
     }
 }
 
-/// Build SMTP config only when a host *and* a recipient are present — otherwise
-/// email is disabled and alerts stay in-app only.
+/// Build SMTP config when a host is present — otherwise email is disabled and
+/// alerts stay in-app only. The recipient is per-user (`user.email`), so we no
+/// longer require a global `ALERT_EMAIL_TO`; it survives only as a dev fallback.
 fn parse_smtp() -> Option<SmtpConfig> {
     let host = non_empty(std::env::var("SMTP_HOST").ok())?;
-    let to = non_empty(std::env::var("ALERT_EMAIL_TO").ok())?;
+    let to = non_empty(std::env::var("ALERT_EMAIL_TO").ok());
     let port = std::env::var("SMTP_PORT")
         .ok()
         .and_then(|s| s.trim().parse().ok())
