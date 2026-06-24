@@ -30,11 +30,17 @@ impl PlaidEnv {
         }
     }
 
-    /// Parse from the `PLAID_ENV` env value; defaults to sandbox.
-    pub fn from_str_or_sandbox(s: &str) -> Self {
+    /// Strictly parse a `PLAID_ENV` value. Unlike a lenient parser, an
+    /// unrecognized value is an **error**, not a silent fall-back to sandbox —
+    /// so a typo (`prodcution`) can't quietly downgrade which Plaid environment
+    /// we talk to. The empty/unset case is handled by the caller (config).
+    pub fn parse(s: &str) -> Result<Self, String> {
         match s.trim().to_ascii_lowercase().as_str() {
-            "production" => PlaidEnv::Production,
-            _ => PlaidEnv::Sandbox,
+            "sandbox" => Ok(PlaidEnv::Sandbox),
+            "production" => Ok(PlaidEnv::Production),
+            other => Err(format!(
+                "invalid PLAID_ENV '{other}' (expected 'sandbox' or 'production')"
+            )),
         }
     }
 }
@@ -63,6 +69,22 @@ struct PlaidApiErrorBody {
     error_code: String,
     #[serde(default)]
     error_message: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PlaidEnv;
+
+    #[test]
+    fn parses_known_envs_and_rejects_typos() {
+        assert_eq!(PlaidEnv::parse("sandbox").unwrap(), PlaidEnv::Sandbox);
+        assert_eq!(
+            PlaidEnv::parse(" PRODUCTION ").unwrap(),
+            PlaidEnv::Production
+        );
+        assert!(PlaidEnv::parse("prodcution").is_err());
+        assert!(PlaidEnv::parse("").is_err());
+    }
 }
 
 /// Wraps an endpoint request with the credentials Plaid expects in every body.

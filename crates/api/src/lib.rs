@@ -17,11 +17,13 @@ pub mod sync;
 
 use std::time::Duration;
 
+use axum::http::{HeaderName, HeaderValue};
 use axum::Router;
 use config::Config;
 use state::AppState;
 use tokio_cron_scheduler::{Job, JobScheduler};
 use tower_http::limit::RequestBodyLimitLayer;
+use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
 
@@ -31,14 +33,25 @@ const MAX_BODY_BYTES: usize = 64 * 1024;
 /// Hard per-request timeout, so a slow/stuck request can't pin a connection.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 
+/// Content-Security-Policy for the same-origin SPA. The bundle is served from
+/// our origin (`'self'`); inline styles are allowed because the UI uses React
+/// `style=` attributes. `frame-ancestors 'none'` blocks clickjacking.
+const CSP: &str = "default-src 'self'; base-uri 'self'; form-action 'self'; \
+     frame-ancestors 'none'; object-src 'none'; img-src 'self' data:; \
+     style-src 'self' 'unsafe-inline'; script-src 'self'";
+/// 2 years, with subdomains. Only emitted when serving over HTTPS (prod/staging).
+const HSTS: &str = "max-age=63072000; includeSubDomains";
+
 /// Build the fully-wired Axum app (routes + middleware) for a given state. Shared
 /// by the binary and by integration tests.
 ///
-/// Layer order (outermost first): trace → timeout → body-limit → CSRF guard →
-/// routes. The body limit therefore rejects oversized payloads *before* any
-/// handler (and any argon2 hash) runs.
+/// Layer order (outermost first): security headers → trace → timeout →
+/// body-limit → CSRF guard → routes. The body limit therefore rejects oversized
+/// payloads *before* any handler (and any argon2 hash) runs.
 pub fn build_app(state: AppState) -> Router {
-    routes::router(state.clone())
+    let cookie_secure = state.config.cookie_secure;
+
+    let app = routes::router(state.clone())
         .layer(axum::middleware::from_fn_with_state(
             state,
             auth::csrf::csrf_guard,
@@ -49,6 +62,25 @@ pub fn build_app(state: AppState) -> Router {
             REQUEST_TIMEOUT,
         ))
         .layer(TraceLayer::new_for_http())
+        .layer(static_header("x-content-type-options", "nosniff"))
+        .layer(static_header("referrer-policy", "same-origin"))
+        .layer(static_header("content-security-policy", CSP));
+
+    // HSTS only makes sense over HTTPS — emitting it on the dev HTTP origin would
+    // wrongly pin the browser to https for localhost.
+    if cookie_secure {
+        app.layer(static_header("strict-transport-security", HSTS))
+    } else {
+        app
+    }
+}
+
+/// A layer that sets a fixed response header (only if the handler didn't set one).
+fn static_header(name: &'static str, value: &'static str) -> SetResponseHeaderLayer<HeaderValue> {
+    SetResponseHeaderLayer::if_not_present(
+        HeaderName::from_static(name),
+        HeaderValue::from_static(value),
+    )
 }
 
 /// Load config, connect to Postgres, run migrations, and serve until shutdown.
@@ -57,17 +89,28 @@ pub async fn serve() -> anyhow::Result<()> {
     init_tracing();
 
     let config = Config::from_env()?;
-    tracing::info!(plaid_env = ?config.plaid_env, "starting api");
+    tracing::info!(env = ?config.app_env, plaid_env = ?config.plaid_env, "starting api");
 
     let pool = db::connect(&config.database_url).await?;
     db::run_migrations(&pool).await?;
 
-    let bind_addr = config.bind_addr.clone();
+    // Cloud Run injects PORT; honor it over BIND_ADDR when present.
+    let bind_addr = match config.port {
+        Some(port) => format!("0.0.0.0:{port}"),
+        None => config.bind_addr.clone(),
+    };
+    let scheduler_enabled = config.scheduler_enabled;
     let state = AppState::new(pool, config);
 
     // Background scheduler: periodically refresh prices, evaluate alert rules,
-    // and email any new alerts. Kept alive for the process lifetime.
-    let _scheduler = start_scheduler(state.clone()).await?;
+    // and email new alerts. Disabled in prod (Cloud Scheduler hits the internal
+    // endpoint instead); kept alive for the process lifetime when enabled.
+    let _scheduler = if scheduler_enabled {
+        Some(start_scheduler(state.clone()).await?)
+    } else {
+        tracing::info!("in-process scheduler disabled (driven externally)");
+        None
+    };
 
     let app = build_app(state);
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
