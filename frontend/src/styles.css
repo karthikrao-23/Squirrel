@@ -151,6 +151,14 @@ td.r, th.r { text-align: right; }
 .btn.block { width: 100%; }
 .btn:disabled { opacity: .5; cursor: not-allowed; }
 
+/* Inline text button (e.g. login/signup toggle, header logout). */
+.linklike {
+  appearance: none; border: 0; background: none; padding: 0; cursor: pointer;
+  font: inherit; font-weight: 600; color: var(--brand-ink);
+}
+.linklike:hover { text-decoration: underline; }
+.linklike:disabled { opacity: .5; cursor: not-allowed; text-decoration: none; }
+
 .field { margin-bottom: 16px; }
 .field label { display: block; font-weight: 600; margin-bottom: 6px; font-size: 13px; }
 .field .hint { color: var(--text-faint); font-size: 12px; margin-top: 4px; }

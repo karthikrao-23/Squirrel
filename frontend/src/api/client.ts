@@ -1,11 +1,38 @@
 // Thin fetch wrapper. The Axum backend returns errors as `{ "error": "message" }`
 // (see crates/api/src/error.rs); surface that text so TanStack Query can show it.
+//
+// Two auth concerns live here so every call inherits them:
+//   1. Mutating requests carry the `X-Squirrel-CSRF` header. Cross-site JS can't
+//      set a custom header without a CORS preflight the backend never grants, so
+//      this is the CSRF token the backend's guard requires.
+//   2. A 401 is turned into a typed `UnauthorizedError`, which the query client's
+//      global handler uses to bounce the user back to the login screen.
+
+export const CSRF_HEADER = "X-Squirrel-CSRF";
+
+/** Thrown on any 401 so callers (and the global handler) can react to an
+ *  expired/absent session without string-matching messages. */
+export class UnauthorizedError extends Error {
+  constructor() {
+    super("unauthorized");
+    this.name = "UnauthorizedError";
+  }
+}
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
+  const method = (init?.method ?? "GET").toUpperCase();
+  const mutating = method !== "GET" && method !== "HEAD";
+
   const res = await fetch(path, {
-    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+    headers: {
+      "Content-Type": "application/json",
+      ...(mutating ? { [CSRF_HEADER]: "1" } : {}),
+      ...(init?.headers ?? {}),
+    },
     ...init,
   });
+
+  if (res.status === 401) throw new UnauthorizedError();
 
   if (!res.ok) {
     let message = `Request failed (${res.status})`;
