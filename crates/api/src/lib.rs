@@ -5,6 +5,7 @@
 //! requests. `main.rs` is a thin wrapper over [`serve`].
 
 pub mod alert_engine;
+pub mod auth;
 pub mod config;
 pub mod crypto;
 pub mod email;
@@ -14,16 +15,40 @@ pub mod routes;
 pub mod state;
 pub mod sync;
 
+use std::time::Duration;
+
 use axum::Router;
 use config::Config;
 use state::AppState;
 use tokio_cron_scheduler::{Job, JobScheduler};
+use tower_http::limit::RequestBodyLimitLayer;
+use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
+
+/// Cap on request body size. argon2 sits on unauthenticated routes, so an
+/// unbounded body is a cheap amplification lever; 64 KiB is ample for our JSON.
+const MAX_BODY_BYTES: usize = 64 * 1024;
+/// Hard per-request timeout, so a slow/stuck request can't pin a connection.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Build the fully-wired Axum app (routes + middleware) for a given state. Shared
 /// by the binary and by integration tests.
+///
+/// Layer order (outermost first): trace → timeout → body-limit → CSRF guard →
+/// routes. The body limit therefore rejects oversized payloads *before* any
+/// handler (and any argon2 hash) runs.
 pub fn build_app(state: AppState) -> Router {
-    routes::router(state).layer(TraceLayer::new_for_http())
+    routes::router(state.clone())
+        .layer(axum::middleware::from_fn_with_state(
+            state,
+            auth::csrf::csrf_guard,
+        ))
+        .layer(RequestBodyLimitLayer::new(MAX_BODY_BYTES))
+        .layer(TimeoutLayer::with_status_code(
+            axum::http::StatusCode::REQUEST_TIMEOUT,
+            REQUEST_TIMEOUT,
+        ))
+        .layer(TraceLayer::new_for_http())
 }
 
 /// Load config, connect to Postgres, run migrations, and serve until shutdown.
@@ -58,7 +83,7 @@ async fn start_scheduler(state: AppState) -> anyhow::Result<JobScheduler> {
     let job = Job::new_async(cron.as_str(), move |_uuid, _lock| {
         let state = state.clone();
         Box::pin(async move {
-            if let Err(e) = alert_engine::run_cycle(&state).await {
+            if let Err(e) = alert_engine::run_cycle_all_users(&state).await {
                 tracing::error!(error = %e, "scheduled alert cycle failed");
             }
         })

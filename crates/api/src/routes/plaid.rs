@@ -13,9 +13,11 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use crate::auth::AuthUser;
 use crate::error::AppError;
 use crate::state::AppState;
 use crate::sync::{self, SyncSummary};
+use uuid::Uuid;
 
 /// Default sandbox institution that supports the Investments product.
 const SANDBOX_INSTITUTION: &str = "ins_109508";
@@ -46,13 +48,15 @@ struct ConnectResponse {
 }
 
 /// `POST /api/plaid/link-token`
-async fn link_token(State(state): State<AppState>) -> Result<Json<Value>, AppError> {
+async fn link_token(
+    State(state): State<AppState>,
+    user: AuthUser,
+) -> Result<Json<Value>, AppError> {
     require_plaid(&state)?;
-    let user = db::queries::users::ensure_default(&state.db).await?;
     let resp = state
         .plaid
         .create_link_token(
-            &user.id.to_string(),
+            &user.0.id.to_string(),
             state.config.plaid_webhook_url.as_deref(),
         )
         .await?;
@@ -65,15 +69,17 @@ async fn link_token(State(state): State<AppState>) -> Result<Json<Value>, AppErr
 /// `POST /api/plaid/exchange`
 async fn exchange(
     State(state): State<AppState>,
+    user: AuthUser,
     Json(body): Json<ExchangeReq>,
 ) -> Result<Json<ConnectResponse>, AppError> {
-    let resp = connect_with_public_token(&state, &body.public_token).await?;
+    let resp = connect_with_public_token(&state, user.0.id, &body.public_token).await?;
     Ok(Json(resp))
 }
 
 /// `POST /api/plaid/sandbox/connect` — end-to-end test path without a frontend.
 async fn sandbox_connect(
     State(state): State<AppState>,
+    user: AuthUser,
     body: Option<Json<SandboxConnectReq>>,
 ) -> Result<Json<ConnectResponse>, AppError> {
     require_plaid(&state)?;
@@ -84,7 +90,7 @@ async fn sandbox_connect(
         .plaid
         .sandbox_public_token_create(&institution)
         .await?;
-    let resp = connect_with_public_token(&state, &minted.public_token).await?;
+    let resp = connect_with_public_token(&state, user.0.id, &minted.public_token).await?;
     Ok(Json(resp))
 }
 
@@ -115,6 +121,7 @@ async fn webhook(
 /// initial sync.
 async fn connect_with_public_token(
     state: &AppState,
+    user_id: Uuid,
     public_token: &str,
 ) -> Result<ConnectResponse, AppError> {
     require_plaid(state)?;
@@ -122,9 +129,8 @@ async fn connect_with_public_token(
 
     let exchanged = state.plaid.exchange_public_token(public_token).await?;
     let encrypted = crate::crypto::encrypt(&key, exchanged.access_token.as_bytes())?;
-    let user = db::queries::users::ensure_default(&state.db).await?;
     let item =
-        db::queries::plaid_items::upsert(&state.db, user.id, &exchanged.item_id, &encrypted, None)
+        db::queries::plaid_items::upsert(&state.db, user_id, &exchanged.item_id, &encrypted, None)
             .await?;
 
     let summary = sync::sync_item(&state.db, &state.plaid, &key, &item).await?;

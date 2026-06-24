@@ -11,6 +11,9 @@
 # Node / frontend (added in M6)
 web/node_modules
 web/dist
+frontend/node_modules
+frontend/dist
+frontend/.vite
 
 # OS
 .DS_Store

@@ -19,7 +19,15 @@ license = "MIT"
 tokio = { version = "1", features = ["full"] }
 axum = "0.8"
 tower = "0.5"
-tower-http = { version = "0.6", features = ["trace", "cors"] }
+tower-http = { version = "0.6", features = [
+    "trace",
+    "cors",
+    "fs",
+    "limit",
+    "timeout",
+    "set-header",
+] }
+tower_governor = "0.7"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sqlx = { version = "0.8", default-features = false, features = [
@@ -40,12 +48,21 @@ chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 anyhow = "1"
 thiserror = "2"
+log = "0.4"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 dotenvy = "0.15"
 aes-gcm = { version = "0.10", features = ["std"] }
 base64 = "0.22"
 rand = "0.8"
+# Auth: password hashing (argon2id), session-token hashing, cookies, constant-time
+# comparison, rate limiting, and email/password normalization.
+argon2 = "0.5"
+sha2 = "0.10"
+axum-extra = { version = "0.10", features = ["cookie"] }
+subtle = "2"
+email_address = "0.2"
+unicode-normalization = "0.1"
 tokio-cron-scheduler = "0.13"
 lettre = { version = "0.11", default-features = false, features = [
     "builder",

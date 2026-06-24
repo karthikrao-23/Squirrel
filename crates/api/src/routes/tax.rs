@@ -14,6 +14,7 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::auth::AuthUser;
 use crate::error::AppError;
 use crate::state::AppState;
 
@@ -55,8 +56,11 @@ struct TaxSummary {
     lots_unpriced: usize,
 }
 
-async fn summary(State(state): State<AppState>) -> Result<Json<TaxSummary>, AppError> {
-    let user = db::queries::users::ensure_default(&state.db).await?;
+async fn summary(
+    State(state): State<AppState>,
+    auth: AuthUser,
+) -> Result<Json<TaxSummary>, AppError> {
+    let user = auth.0;
     let status = parse_status(&user.filing_status);
     let lots = db::queries::tax_lots::list_open_with_price(&state.db, user.id).await?;
     let as_of = today();
@@ -120,8 +124,11 @@ struct HarvestCandidate {
     wash_sale_warning: bool,
 }
 
-async fn harvest(State(state): State<AppState>) -> Result<Json<serde_json::Value>, AppError> {
-    let user = db::queries::users::ensure_default(&state.db).await?;
+async fn harvest(
+    State(state): State<AppState>,
+    auth: AuthUser,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let user = auth.0;
     let status = parse_status(&user.filing_status);
     let as_of = today();
     let lots = db::queries::tax_lots::list_open_with_price(&state.db, user.id).await?;
@@ -208,6 +215,7 @@ struct SimulateResp {
 
 async fn simulate(
     State(state): State<AppState>,
+    auth: AuthUser,
     Json(req): Json<SimulateReq>,
 ) -> Result<Json<SimulateResp>, AppError> {
     if req.sales.is_empty() {
@@ -215,7 +223,7 @@ async fn simulate(
             "provide at least one lot to sell".into(),
         ));
     }
-    let user = db::queries::users::ensure_default(&state.db).await?;
+    let user = auth.0;
     let status = parse_status(&user.filing_status);
     let as_of = today();
 

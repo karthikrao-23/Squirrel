@@ -12,11 +12,10 @@ use domain::lots::{reconstruct_fifo, LotInput};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-/// Reconstruct and persist all tax lots for the single app user. Returns the
-/// number of open lots stored.
-pub async fn rebuild_lots(pool: &PgPool) -> anyhow::Result<u64> {
-    let user = db::queries::users::ensure_default(pool).await?;
-    let rows = db::queries::transactions::list_for_lots(pool, user.id).await?;
+/// Reconstruct and persist all tax lots for a user. Returns the number of open
+/// lots stored.
+pub async fn rebuild_lots(pool: &PgPool, user_id: Uuid) -> anyhow::Result<u64> {
+    let rows = db::queries::transactions::list_for_lots(pool, user_id).await?;
 
     // Group transactions by (account, security). BTreeMap keeps a deterministic
     // order, which keeps the resulting lot rows stable across rebuilds.
@@ -51,7 +50,7 @@ pub async fn rebuild_lots(pool: &PgPool) -> anyhow::Result<u64> {
         }
     }
 
-    let count = db::queries::tax_lots::replace_for_user(pool, user.id, &new_lots).await?;
-    tracing::info!(lots = count, "tax lots rebuilt");
+    let count = db::queries::tax_lots::replace_for_user(pool, user_id, &new_lots).await?;
+    tracing::info!(lots = count, user = %user_id, "tax lots rebuilt");
     Ok(count)
 }

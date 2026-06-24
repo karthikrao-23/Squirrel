@@ -19,7 +19,7 @@ pub async fn upsert(
         r#"
         INSERT INTO plaid_items (user_id, plaid_item_id, access_token_encrypted, institution_id, status)
         VALUES ($1, $2, $3, $4, 'active')
-        ON CONFLICT (plaid_item_id) DO UPDATE
+        ON CONFLICT (user_id, plaid_item_id) DO UPDATE
         SET access_token_encrypted = EXCLUDED.access_token_encrypted,
             institution_id = COALESCE(EXCLUDED.institution_id, plaid_items.institution_id),
             status = 'active',

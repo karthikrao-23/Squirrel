@@ -12,6 +12,7 @@ use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+use crate::auth::AuthUser;
 use crate::error::AppError;
 use crate::state::AppState;
 
@@ -27,15 +28,19 @@ pub fn router() -> Router<AppState> {
         .route("/api/lots/rebuild", post(rebuild_lots))
 }
 
-async fn list_accounts(State(state): State<AppState>) -> Result<Json<Value>, AppError> {
-    let user = db::queries::users::ensure_default(&state.db).await?;
-    let accounts = db::queries::accounts::list(&state.db, user.id).await?;
+async fn list_accounts(
+    State(state): State<AppState>,
+    user: AuthUser,
+) -> Result<Json<Value>, AppError> {
+    let accounts = db::queries::accounts::list(&state.db, user.0.id).await?;
     Ok(Json(json!({ "accounts": accounts })))
 }
 
-async fn list_holdings(State(state): State<AppState>) -> Result<Json<Value>, AppError> {
-    let user = db::queries::users::ensure_default(&state.db).await?;
-    let holdings = db::queries::holdings::list_with_security(&state.db, user.id).await?;
+async fn list_holdings(
+    State(state): State<AppState>,
+    user: AuthUser,
+) -> Result<Json<Value>, AppError> {
+    let holdings = db::queries::holdings::list_with_security(&state.db, user.0.id).await?;
     Ok(Json(json!({ "holdings": holdings })))
 }
 
@@ -46,21 +51,23 @@ struct TxnQuery {
 
 async fn list_transactions(
     State(state): State<AppState>,
+    user: AuthUser,
     Query(q): Query<TxnQuery>,
 ) -> Result<Json<Value>, AppError> {
     let limit = q.limit.unwrap_or(DEFAULT_TXN_LIMIT).clamp(1, MAX_TXN_LIMIT);
-    let user = db::queries::users::ensure_default(&state.db).await?;
-    let transactions = db::queries::transactions::list(&state.db, user.id, limit).await?;
+    let transactions = db::queries::transactions::list(&state.db, user.0.id, limit).await?;
     Ok(Json(json!({ "transactions": transactions })))
 }
 
-async fn list_lots(State(state): State<AppState>) -> Result<Json<Value>, AppError> {
-    let user = db::queries::users::ensure_default(&state.db).await?;
-    let lots = db::queries::tax_lots::list_with_security(&state.db, user.id).await?;
+async fn list_lots(State(state): State<AppState>, user: AuthUser) -> Result<Json<Value>, AppError> {
+    let lots = db::queries::tax_lots::list_with_security(&state.db, user.0.id).await?;
     Ok(Json(json!({ "lots": lots })))
 }
 
-async fn rebuild_lots(State(state): State<AppState>) -> Result<Json<Value>, AppError> {
-    let count = crate::lots::rebuild_lots(&state.db).await?;
+async fn rebuild_lots(
+    State(state): State<AppState>,
+    user: AuthUser,
+) -> Result<Json<Value>, AppError> {
+    let count = crate::lots::rebuild_lots(&state.db, user.0.id).await?;
     Ok(Json(json!({ "rebuilt": count })))
 }
