@@ -1,0 +1,16 @@
+# Controls what `gcloud builds submit` uploads as the build context (gcloud does
+# NOT honor .dockerignore). Keep this in sync with .dockerignore so we never ship
+# build artifacts or local config into Cloud Build.
+.git/
+.github/
+target/
+**/target/
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+.env
+*.local
+deploy/config.env
+deploy/secrets.env
+.DS_Store
