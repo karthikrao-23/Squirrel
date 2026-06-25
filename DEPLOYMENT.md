@@ -64,18 +64,22 @@ human-time than a hand-rolled VM; trivial to migrate off later because everythin
 
 ## 2. Build & packaging
 
-- **Multi-stage Dockerfile for `api`.** Stage 1 builds with the Rust toolchain (cache `cargo`
-  registry + a dependency-only layer so app edits don't rebuild the world); stage 2 copies the
-  single static binary into a minimal base (`debian:bookworm-slim` or `gcr.io/distroless/cc`).
-  We're already on `rustls` (no OpenSSL), so the runtime image stays tiny with no system TLS deps.
-- **SQLx offline mode.** `.sqlx/` is committed (see `.gitignore`). Build with
-  `SQLX_OFFLINE=true` so the image builds **without a live database** — important for CI and
-  reproducible builds.
-- **Bake `migrations/` into the image** (the binary already runs `sqlx::migrate!` at startup) —
-  see §4 for the caveat on auto-migrating in multi-instance setups.
-- **Frontend (M7):** `npm run build` → static assets served from the platform's CDN/static
-  hosting or behind the same reverse proxy under `/`. API under `/api`. Keep them separable.
-- **Pin a non-root user** in the container and set a read-only root filesystem where possible.
+- **Multi-stage `Dockerfile` (in repo).** Stage 1 (`node:22-alpine`) builds the SPA → `dist/`;
+  stage 2 (`rust:1-bookworm`) builds the release binary with a dependency-only cache layer so app
+  edits don't rebuild the world; stage 3 copies the binary + `migrations/` + `dist/` into
+  `gcr.io/distroless/cc-debian12:nonroot` (pinned by digest). We're on `rustls` (no OpenSSL), so
+  `cc` is enough and the runtime image stays tiny.
+- **No SQLx offline mode needed.** Every query is a *runtime* string (we use SQLx's runtime API,
+  not the compile-time `query!` macro), so the image builds without a live database and without a
+  committed `.sqlx/`. (Earlier drafts of this doc called for `SQLX_OFFLINE=true`; that's obsolete.)
+- **Migrations are baked into the image** (`/app/migrations`); the binary runs `sqlx::migrate!` at
+  startup — see §4 for the caveat on auto-migrating in multi-instance setups.
+- **One container serves both.** The binary serves the built SPA from `STATIC_DIR=/app/dist`
+  (`ServeDir` fallback, mounted after `/api` and `/health`), so `/` is the app and `/api` is the
+  API on the same origin — no separate static host, no CORS.
+- **Non-root + read-only rootfs.** The image runs as the distroless `nonroot` user (uid 65532);
+  the app writes nothing to disk (logs → stdout, data → Postgres), so set the Cloud Run root
+  filesystem read-only.
 
 ---
 

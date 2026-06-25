@@ -24,6 +24,7 @@ use config::Config;
 use state::AppState;
 use tokio_cron_scheduler::{Job, JobScheduler};
 use tower_http::limit::RequestBodyLimitLayer;
+use tower_http::services::{ServeDir, ServeFile};
 use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
@@ -51,8 +52,21 @@ const HSTS: &str = "max-age=63072000; includeSubDomains";
 /// payloads *before* any handler (and any argon2 hash) runs.
 pub fn build_app(state: AppState) -> Router {
     let cookie_secure = state.config.cookie_secure;
+    let static_dir = state.config.static_dir.clone();
 
-    let app = routes::router(state.clone())
+    let mut routed = routes::router(state.clone());
+
+    // Serve the built SPA from the binary when STATIC_DIR is set (container).
+    // Mounted as the fallback — *after* `/api` and `/health` — so unknown SPA
+    // client routes fall back to index.html, while unknown `/api/*` paths still
+    // hit the JSON-404 catch-all (they never reach here). ServeDir rejects `../`.
+    if let Some(dir) = static_dir {
+        let index = std::path::Path::new(&dir).join("index.html");
+        let serve = ServeDir::new(&dir).fallback(ServeFile::new(index));
+        routed = routed.fallback_service(serve);
+    }
+
+    let app = routed
         .layer(axum::middleware::from_fn_with_state(
             state,
             auth::csrf::csrf_guard,
