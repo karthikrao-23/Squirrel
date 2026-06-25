@@ -76,6 +76,9 @@ pub struct Config {
     /// Bearer token for the internal endpoint (`/api/internal/*`). Fallback when
     /// Cloud Run OIDC isn't used; `None` means the endpoint is closed.
     pub internal_api_token: Option<String>,
+    /// Directory of built SPA assets to serve from the binary (set in the
+    /// container). `None` in dev, where Vite serves the frontend instead.
+    pub static_dir: Option<String>,
 }
 
 #[derive(Clone)]
@@ -140,6 +143,7 @@ impl Config {
             None => app_env.is_development(),
         };
         let internal_api_token = non_empty(std::env::var("INTERNAL_API_TOKEN").ok());
+        let static_dir = non_empty(std::env::var("STATIC_DIR").ok());
 
         let config = Self {
             app_env,
@@ -159,6 +163,7 @@ impl Config {
             app_origin,
             scheduler_enabled,
             internal_api_token,
+            static_dir,
         };
         config.validate_for_prod()?;
         Ok(config)
@@ -292,6 +297,7 @@ mod tests {
             app_origin: Some("https://squirrel.example".into()),
             scheduler_enabled: false,
             internal_api_token: Some("tok".into()),
+            static_dir: None,
         }
     }
 

@@ -39,6 +39,7 @@ fn test_config() -> api::config::Config {
         app_origin: Some("http://app.test".into()),
         scheduler_enabled: false,
         internal_api_token: None,
+        static_dir: None,
     }
 }
 
@@ -1031,4 +1032,59 @@ async fn internal_endpoint_closed_when_unconfigured(pool: PgPool) {
     )
     .await;
     assert_eq!(resp.status, StatusCode::UNAUTHORIZED);
+}
+
+// ============================ SPA static serving (Part D) ====================
+
+fn make_static_dir() -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "squirrel_static_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(dir.join("assets")).unwrap();
+    std::fs::write(
+        dir.join("index.html"),
+        "<!doctype html><title>Squirrel</title>",
+    )
+    .unwrap();
+    std::fs::write(dir.join("assets/app.js"), "console.log(1)").unwrap();
+    dir
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn serves_spa_and_does_not_swallow_api_404(pool: PgPool) {
+    let dir = make_static_dir();
+    let mut cfg = test_config();
+    cfg.static_dir = Some(dir.to_str().unwrap().to_string());
+    let app = app_with(pool, cfg);
+
+    // Root → index.html.
+    let root = request(&app, "GET", "/", None, false, None, None).await;
+    assert_eq!(root.status, StatusCode::OK);
+    assert!(root.header("content-type").unwrap().contains("text/html"));
+
+    // Unknown client route → SPA fallback (index.html), not a 404.
+    let spa = request(&app, "GET", "/dashboard", None, false, None, None).await;
+    assert_eq!(spa.status, StatusCode::OK);
+    assert!(spa.header("content-type").unwrap().contains("text/html"));
+
+    // A real asset is served.
+    let asset = request(&app, "GET", "/assets/app.js", None, false, None, None).await;
+    assert_eq!(asset.status, StatusCode::OK);
+
+    // Unknown /api/* path is a JSON 404 — NOT swallowed into 200 index.html.
+    let api404 = request(&app, "GET", "/api/does-not-exist", None, false, None, None).await;
+    assert_eq!(api404.status, StatusCode::NOT_FOUND);
+    assert!(api404.body["error"].is_string());
+
+    // /health still works behind the static fallback.
+    let health = request(&app, "GET", "/health", None, false, None, None).await;
+    assert_eq!(health.status, StatusCode::OK);
+    assert_eq!(health.body["status"], "ok");
+
+    let _ = std::fs::remove_dir_all(dir);
 }

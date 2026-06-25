@@ -10,8 +10,10 @@ pub mod portfolio;
 pub mod profile;
 pub mod tax;
 
+use axum::routing::any;
 use axum::Router;
 
+use crate::error::AppError;
 use crate::state::AppState;
 
 pub fn router(state: AppState) -> Router {
@@ -24,5 +26,12 @@ pub fn router(state: AppState) -> Router {
         .merge(profile::router())
         .merge(tax::router())
         .merge(alerts::router())
+        // Unmatched `/api/*` returns a JSON 404 so the SPA static fallback can't
+        // swallow an unknown API path into a 200 HTML page.
+        .route("/api/{*rest}", any(api_not_found))
         .with_state(state)
+}
+
+async fn api_not_found() -> AppError {
+    AppError::NotFound
 }
