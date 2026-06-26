@@ -20,3 +20,7 @@ frontend/.vite
 
 # Claude Code runtime artifacts
 .claude/scheduled_tasks.lock
+
+# Deploy: local project config (the *.example template is committed)
+deploy/config.env
+deploy/secrets.env

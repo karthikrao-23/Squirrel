@@ -88,15 +88,20 @@ human-time than a hand-rolled VM; trivial to migrate off later because everythin
 - Everything already comes from env (`crates/api/src/config.rs`) — good, that's 12-factor.
   Production values live in the **platform secrets store** (Fly secrets / Render env groups /
   cloud secrets manager), never in the repo or image.
-- **Required in prod:** `DATABASE_URL` (with `sslmode=require`), `TOKEN_ENCRYPTION_KEY`,
-  `PLAID_ENV=production`, `PLAID_CLIENT_ID`, `PLAID_SECRET`, SMTP creds, `BIND_ADDR`
-  (bind to the platform's expected port), `RUST_LOG` (drop to `info`, never `debug` for
-  `api`/`sqlx` in prod — avoids leaking tokens/PII into logs).
-- **Add a startup guard:** when `PLAID_ENV=production`, fail fast if any of the Plaid/encryption
-  secrets are empty (today they're optional — fine for M1, unsafe for prod). Small change to
-  `Config::from_env`.
-- **Add a `PLAID_WEBHOOK_URL` / `APP_BASE_URL`** config so redirect + webhook URLs aren't
-  hardcoded.
+- **Required in prod:** `APP_ENV=production`, `DATABASE_URL`, `TOKEN_ENCRYPTION_KEY`,
+  `PLAID_CLIENT_ID`, `PLAID_SECRET`, `INTERNAL_API_TOKEN`, optional SMTP creds, and `RUST_LOG`
+  (`info`, never `debug` for `api`/`sqlx` in prod — `db::connect` also clamps statement logging to
+  `WARN` so bound params can't leak). On Cloud Run, `PORT` is injected; `STATIC_DIR=/app/dist` is
+  baked into the image.
+  - `DATABASE_URL` TLS mode is connection-dependent — see §4.
+- **`APP_ENV` is the single source of truth for security posture** (`cookie_secure`, the
+  sandbox-connect gate, the scheduler default). **Strict-parsed** (an unknown value is a fatal boot
+  error), and `PLAID_ENV` parses strictly too so a typo can't downgrade the Plaid environment.
+- **Startup guard — DONE** (`Config::validate_for_prod`): `APP_ENV=production` fails fast unless
+  `TOKEN_ENCRYPTION_KEY`, `PLAID_CLIENT_ID/SECRET`, and `INTERNAL_API_TOKEN` are present and cookies
+  are `Secure`.
+- **`PLAID_WEBHOOK_URL` + `APP_ORIGIN`** are config (set by `deploy/deploy.sh` from `BASE_URL`), so
+  the webhook URL and the CSRF Origin check aren't hardcoded.
 
 ---
 
@@ -104,16 +109,25 @@ human-time than a hand-rolled VM; trivial to migrate off later because everythin
 
 - **Use managed Postgres** with automated daily backups + point-in-time recovery. Don't run
   Postgres in the same container as the app in prod (the docker-compose Postgres is dev-only).
-- **TLS to the DB:** append `?sslmode=require` (or `verify-full` with the provider CA) to
-  `DATABASE_URL`.
+- **TLS to the DB depends on the transport:**
+  - **Cloud SQL via the built-in unix socket** (what `deploy/` uses):
+    `DATABASE_URL=postgres://USER:PW@/squirrel?host=/cloudsql/<INSTANCE_CONN>&sslmode=disable`.
+    `sslmode=disable` is correct **here only** — the socket is loopback-local inside the Cloud Run
+    sandbox (no network to encrypt), and the Cloud SQL connector handles transport security. The
+    password lives in Secret Manager; the full URL is stored as one secret so it never hits a
+    command line.
+  - **Any TCP/IP connection** (a different host, a non-Cloud-SQL Postgres): use
+    `?sslmode=require` (or `verify-full` with the provider CA). This is the §11 checklist item.
 - **Migrations strategy — decide deliberately.** The app auto-runs migrations on startup
   (`db::run_migrations`). That's convenient but with **>1 instance** it races (two boots applying
   at once) and couples deploys to schema changes. Recommended evolution:
-  - Phase 1 (single instance): auto-migrate on boot is fine.
-  - Phase 2 (multi-instance / zero-downtime): run migrations as a **separate one-shot step** in
-    the deploy pipeline (`sqlx migrate run`) *before* rolling the app, and make migrations
-    **backward-compatible** (expand/contract: add columns nullable, backfill, then drop in a
-    later release) so old and new instances coexist during a rolling deploy.
+  - Phase 1 (low instance count): auto-migrate on boot is fine. `sqlx::migrate!` takes a Postgres
+    **advisory lock**, so even with `max-instances>1` two cold-starting instances can't double-apply
+    — one waits. (The `deploy/` config ships `max-instances=3`; this is safe for *correctness*.)
+  - Phase 2 (zero-downtime / breaking changes): run migrations as a **separate one-shot step**
+    (a Cloud Run **Job** running the same image with an entrypoint override, or `sqlx migrate run`)
+    *before* rolling the app, and make migrations **backward-compatible** (expand/contract: add
+    columns nullable, backfill, then drop in a later release) so old and new revisions coexist.
 - **Connection pool sizing:** `max_connections(10)` per instance (`crates/db/src/lib.rs`) ×
   instances must stay under the managed DB's connection limit. Consider a pooler (PgBouncer /
   provider-built-in) before scaling out.
@@ -200,23 +214,30 @@ human-time than a hand-rolled VM; trivial to migrate off later because everythin
 
 ## 11. Pre-launch security checklist (cross-ref PLAN §10)
 
-- [ ] Auth + per-user row scoping enforced at the query layer (not just `user_id` columns)
-- [ ] `TOKEN_ENCRYPTION_KEY` in a secrets manager; rotation procedure documented
-- [ ] Plaid webhook signature verification on
-- [ ] `RUST_LOG` at `info`; log scrubbing verified (no tokens/PII)
-- [ ] TLS to DB (`sslmode`), HTTPS + HSTS on the app, CORS locked to frontend origin
-- [ ] Rate limiting + request-size limits in place
+- [x] Auth + per-user row scoping enforced at the query layer — **done** (auth backend + composite
+      Plaid uniques; cross-tenant isolation tests)
+- [ ] `TOKEN_ENCRYPTION_KEY` in a secrets manager; rotation procedure documented (Secret Manager via
+      `deploy/secrets.sh`; rotation = add a new secret version + redeploy)
+- [x] Plaid webhook signature verification on — **done** (ES256 JWT, alg-pinned, body-hash + iat)
+- [x] `RUST_LOG` at `info`; bound-param logging clamped to `WARN` in `db::connect` — **done**
+- [ ] TLS to DB — `sslmode=disable` is correct for the Cloud SQL **unix socket** only (see §4); use
+      `require`/`verify-full` for any TCP connection. **HTTPS + HSTS done** (HSTS emitted in the
+      secure posture). **No CORS needed** — the SPA is served same-origin from the binary.
+- [x] Rate limiting + request-size limits — **done** (governor on auth routes; 64 KiB body limit +
+      15s timeout)
 - [ ] Backups taken **and a restore tested**
-- [ ] Production-env startup guard rejects missing secrets
-- [ ] Dependency audit (`cargo audit`) clean; base image patched
-- [ ] "Not tax advice" disclaimer rendered in the UI (PLAN §4)
+- [x] Production-env startup guard rejects missing secrets — **done** (`Config::validate_for_prod`)
+- [x] Dependency audit (`cargo audit`) — **gating** CI job, clean; the sole ignore is
+      RUSTSEC-2023-0071 (`rsa`, no fix; pulled only by the unused `sqlx-mysql`, never compiled).
+      Base image pinned by digest — patch by bumping the digest.
+- [x] "Not tax advice" disclaimer rendered in the UI — **done** (M7)
 
 ---
 
 ## 12. Phased rollout (suggested order)
 
-1. **Containerize** the API (multi-stage Dockerfile, `SQLX_OFFLINE`), run it against the
-   docker-compose Postgres locally to prove the image.
+1. **Containerize** the API (multi-stage `Dockerfile`, no `SQLX_OFFLINE` needed), run it against the
+   docker-compose Postgres locally to prove the image. **Done.**
 2. **Stand up staging** on the chosen PaaS + managed Postgres; deploy with Plaid **Development**
    env and Mailtrap. Exercise the full connect → holdings → alerts loop.
 3. **Harden:** add the startup guard, CORS lockdown, rate limits, log scrubbing, health/readiness
@@ -240,3 +261,43 @@ human-time than a hand-rolled VM; trivial to migrate off later because everythin
 - Plaid: free in sandbox/dev; production is usage-priced — confirm current pricing at apply time
 
 Total ≈ **$25–50/mo** for a small production footprint, scaling with usage.
+
+---
+
+## 14. GCP runbook (Cloud Run + Cloud SQL) — scripted
+
+The chosen target is a **single public Cloud Run service** serving the SPA + `/api` same-origin,
+backed by **Cloud SQL Postgres 16**. Idempotent `gcloud` scripts live in [`deploy/`](deploy/)
+(`deploy/README.md` has the copy-paste quickstart). What they wire up, and why it matches the app:
+
+- **Image** — `deploy/deploy.sh` builds the repo `Dockerfile` with Cloud Build, tags by **git SHA**,
+  pushes to Artifact Registry, and deploys a new Cloud Run revision.
+- **Database** — Cloud SQL via the built-in **unix socket**; `DATABASE_URL` is assembled in
+  `secrets.sh` (`host=/cloudsql/<conn>&sslmode=disable`, see §4) and stored as a **single Secret
+  Manager secret** so the password never touches a command line. The runtime service account gets
+  `cloudsql.client` + `secretmanager.secretAccessor` only.
+- **Config/secrets** — `APP_ENV=production`, `PLAID_ENV`, `RUST_LOG=info`, `STATIC_DIR=/app/dist`,
+  `SCHEDULER_ENABLED=false`, `APP_ORIGIN`/`PLAID_WEBHOOK_URL` (from `BASE_URL`) as plain env;
+  `TOKEN_ENCRYPTION_KEY`, Plaid creds, `INTERNAL_API_TOKEN`, SMTP as secret-backed env. The prod
+  **startup guard** (§3) fails the boot if a required secret is missing.
+- **Scaling / cost guard** — `min-instances=0`, a hard `max-instances` cap, `concurrency=20`, and
+  `512Mi` memory sized for argon2 (~19 MiB/hash × concurrency). Rate limiting on the auth routes
+  + the bounded concurrency keep the unauthenticated argon2 surface from amplifying the bill.
+- **Scheduler** — `deploy/scheduler.sh` creates an **hourly** Cloud Scheduler job → `POST
+  /api/internal/alerts/run`. Because the service is public (SPA + Plaid webhook), Cloud Run IAM
+  can't gate `/api/internal/*` per-path, so it's authenticated at the **app layer** by
+  `INTERNAL_API_TOKEN` (sent as a bearer header). The in-process `tokio-cron` scheduler is **off**
+  in prod (`SCHEDULER_ENABLED=false`); this internal cycle is also what reaps expired sessions.
+- **Health** — point a Cloud Run HTTP liveness/readiness probe at `/health` (stays public).
+- **`X-Forwarded-For` dependency** — the auth-route rate limiter keys on the real client IP from
+  `X-Forwarded-For`, which Google's front end always sets. Don't put another proxy in front that
+  strips it, or `/api/auth/{login,signup}` will fail to key.
+- **Domain + TLS** — map a custom domain (`gcloud run domain-mappings create`), then set `BASE_URL`
+  to it in `config.env` and re-run `deploy.sh` (so `APP_ORIGIN`/`PLAID_WEBHOOK_URL` match) and
+  `scheduler.sh`. Register the redirect/webhook URLs in the Plaid dashboard (§5).
+
+**Not in these scripts (deliberate follow-ups):** CD via Workload Identity Federation (the existing
+`ci.yml` stays; add a deploy workflow later), read-only root filesystem (Cloud Run doesn't expose a
+first-class toggle — the app writes nothing to disk, so the ephemeral container FS is already
+effectively unused), and splitting `/api/internal` into its own authenticated-only service if you
+want platform-enforced OIDC instead of the app-layer bearer.

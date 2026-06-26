@@ -82,6 +82,25 @@ jobs:
       - name: Type-check + build
         run: npm run build
 
+  audit:
+    name: cargo audit (RustSec advisories)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@cargo-audit
+
+      # Gating. The one ignore is RUSTSEC-2023-0071 (rsa "Marvin attack"): it has
+      # no fixed upgrade, and `rsa` is pulled only by `sqlx-mysql` — a driver we
+      # don't use (Postgres only), so it is never compiled into the binary.
+      # Re-evaluate when a fixed `rsa` ships. Any *other* advisory fails CI.
+      - name: Audit dependencies
+        run: cargo audit --ignore RUSTSEC-2023-0071
+
   coverage:
     name: coverage (llvm-cov)
     runs-on: ubuntu-latest
