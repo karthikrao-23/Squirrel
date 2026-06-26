@@ -1088,3 +1088,26 @@ async fn serves_spa_and_does_not_swallow_api_404(pool: PgPool) {
 
     let _ = std::fs::remove_dir_all(dir);
 }
+
+// ============================ Rate-limit key fallback =========================
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn login_without_forwarded_header_does_not_500(pool: PgPool) {
+    // The dev/direct case: no X-Forwarded-For at all. The auth rate limiter must
+    // fall back to a shared bucket instead of erroring — so an unknown-user login
+    // is a clean 401, never a 500 ("Unable To Extract Key").
+    let app = app(pool);
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/auth/login")
+        .header("content-type", "application/json")
+        .header("x-squirrel-csrf", "1")
+        // deliberately NO x-forwarded-for
+        .body(Body::from(
+            json!({ "email": "ghost@example.com", "password": "correct horse battery" })
+                .to_string(),
+        ))
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}

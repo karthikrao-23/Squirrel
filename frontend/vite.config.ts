@@ -8,7 +8,10 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      "/api": "http://localhost:8080",
+      // `xfwd` adds X-Forwarded-For so the backend's auth-route rate limiter
+      // (keys on the real client IP) can extract a key in dev, just like Cloud
+      // Run's front end does in prod.
+      "/api": { target: "http://localhost:8080", xfwd: true },
     },
   },
 });
