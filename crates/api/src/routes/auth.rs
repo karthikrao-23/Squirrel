@@ -3,11 +3,12 @@
 //! Cookies are same-origin, `HttpOnly`, `SameSite=Strict`. The CSRF guard and
 //! rate limiter are applied to these routes in `lib.rs::build_app`, not here.
 
+use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 use std::time::Duration;
 
 use axum::extract::State;
-use axum::http::{header::SET_COOKIE, StatusCode};
+use axum::http::{header::SET_COOKIE, Request, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -15,8 +16,9 @@ use axum_extra::extract::CookieJar;
 use chrono::Utc;
 use db::models::User;
 use serde::Deserialize;
+use tower_governor::errors::GovernorError;
 use tower_governor::governor::GovernorConfigBuilder;
-use tower_governor::key_extractor::SmartIpKeyExtractor;
+use tower_governor::key_extractor::{KeyExtractor, SmartIpKeyExtractor};
 use tower_governor::GovernorLayer;
 use unicode_normalization::UnicodeNormalization;
 
@@ -35,9 +37,31 @@ const MAX_PASSWORD_LEN: usize = 128;
 const AUTH_RATE_PERIOD: Duration = Duration::from_secs(6);
 const AUTH_RATE_BURST: u32 = 10;
 
+/// Rate-limit key: the real client IP from `X-Forwarded-For` / `X-Real-IP` /
+/// `Forwarded` (set by Cloud Run's front end, and the Vite dev proxy), falling
+/// back to a single shared bucket when no forwarding header is present.
+///
+/// `SmartIpKeyExtractor` *errors* when it can't find a key, which `tower_governor`
+/// turns into a `500` — so a request that reached `/login`/`/signup` without an
+/// `X-Forwarded-For` (a direct hit, or a proxy that strips it) failed hard
+/// instead of being served. Falling back to a sentinel keeps those requests
+/// rate-limited (collectively) rather than 500ing.
+#[derive(Clone, Copy)]
+struct ClientIpKeyExtractor;
+
+impl KeyExtractor for ClientIpKeyExtractor {
+    type Key = IpAddr;
+
+    fn extract<T>(&self, req: &Request<T>) -> Result<Self::Key, GovernorError> {
+        Ok(SmartIpKeyExtractor
+            .extract(req)
+            .unwrap_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED)))
+    }
+}
+
 pub fn router() -> Router<AppState> {
     // login + signup are the expensive, unauthenticated surface — rate-limit them.
-    let mut builder = GovernorConfigBuilder::default().key_extractor(SmartIpKeyExtractor);
+    let mut builder = GovernorConfigBuilder::default().key_extractor(ClientIpKeyExtractor);
     builder.period(AUTH_RATE_PERIOD).burst_size(AUTH_RATE_BURST);
     let governor_conf = Arc::new(builder.finish().expect("valid governor config"));
     let rate_limited = Router::new()
@@ -204,4 +228,27 @@ fn validate_password(raw: &str) -> Result<String, AppError> {
         )));
     }
     Ok(password)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn key_extractor_uses_forwarded_ip() {
+        let req = Request::builder()
+            .header("x-forwarded-for", "203.0.113.5")
+            .body(())
+            .unwrap();
+        let key = ClientIpKeyExtractor.extract(&req).unwrap();
+        assert_eq!(key.to_string(), "203.0.113.5");
+    }
+
+    #[test]
+    fn key_extractor_falls_back_without_forwarding_header() {
+        // No X-Forwarded-For / peer info — must not error (that became a 500).
+        let req = Request::builder().body(()).unwrap();
+        let key = ClientIpKeyExtractor.extract(&req).unwrap();
+        assert_eq!(key, IpAddr::V4(Ipv4Addr::UNSPECIFIED));
+    }
 }
