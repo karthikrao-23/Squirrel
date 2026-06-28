@@ -130,6 +130,11 @@ service; `tsc --noEmit` + `vite build` for the frontend) · `cargo-llvm-cov` cov
 
 ## Getting started
 
+> **Just want to run it?** Clone the repo and run **`./run.sh`** — it checks your
+> prerequisites, creates `.env`, starts Postgres, installs the frontend deps, and
+> launches both servers. See [`QUICKSTART.md`](QUICKSTART.md). The manual steps
+> below are the same thing, broken out.
+
 ### Prerequisites
 - Rust (via [rustup](https://rustup.rs)) · Node 22+ · Docker (for Postgres)
 - A free [Plaid sandbox](https://dashboard.plaid.com) account (client_id + secret) for the connect flow
