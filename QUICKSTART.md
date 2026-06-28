@@ -19,11 +19,18 @@ Install these first (the script checks for them and links to each if missing):
 
 Make sure **Docker Desktop is running** before you start.
 
+> **Don't have these?** After cloning, run **`./setup.sh`** — it checks each tool
+> and offers to install whatever's missing (Rust via rustup, Node/openssl via your
+> package manager, Docker via Homebrew cask / the official Linux script). Use
+> `./setup.sh --check` to just see what's missing, or `--yes` to install
+> unattended.
+
 ## 2. Get the code and run it
 
 ```bash
 git clone https://github.com/karthikrao-23/Squirrel.git
 cd Squirrel
+./setup.sh     # optional: check + install any missing prerequisites
 ./run.sh
 ```
 

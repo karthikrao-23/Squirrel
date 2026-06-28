@@ -25,7 +25,7 @@ ok()   { printf '%s ✓ %s%s\n'  "$green" "$*" "$rst"; }
 die()  { printf '%s error:%s %s\n' "$red" "$rst" "$*" >&2; exit 1; }
 
 case "${1:-}" in
-  -h|--help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  -h|--help) awk 'NR==1{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0"; exit 0 ;;
 esac
 SETUP_ONLY=0
 [[ "${1:-}" == "--setup" ]] && SETUP_ONLY=1
@@ -43,7 +43,7 @@ need node   "install Node 20+ via https://nodejs.org (or nvm)"
 need npm    "ships with Node.js"
 need docker "install Docker Desktop via https://www.docker.com/products/docker-desktop"
 need openssl "usually preinstalled; install via your package manager"
-(( missing )) && die "install the missing prerequisites above, then re-run ./run.sh"
+(( missing )) && die "missing prerequisites above — run ./setup.sh to install them, then re-run ./run.sh"
 
 # docker compose v2 plugin, with a fallback to the legacy docker-compose binary.
 if docker compose version >/dev/null 2>&1; then DC=(docker compose)
