@@ -79,6 +79,11 @@ pub struct Config {
     /// Directory of built SPA assets to serve from the binary (set in the
     /// container). `None` in dev, where Vite serves the frontend instead.
     pub static_dir: Option<String>,
+    /// Whether the server applies migrations on boot. True by default (local/dev
+    /// convenience). Set false in production, where the runtime DB role is
+    /// DML-only and migrations are applied separately by the `migrate` job as the
+    /// schema owner (see `deploy/migrate.sh`).
+    pub run_migrations: bool,
 }
 
 #[derive(Clone)]
@@ -144,6 +149,12 @@ impl Config {
         };
         let internal_api_token = non_empty(std::env::var("INTERNAL_API_TOKEN").ok());
         let static_dir = non_empty(std::env::var("STATIC_DIR").ok());
+        // Auto-migrate on boot by default; deploy.sh sets RUN_MIGRATIONS=false so
+        // the DML-only runtime role never needs DDL.
+        let run_migrations = match non_empty(std::env::var("RUN_MIGRATIONS").ok()) {
+            Some(v) => parse_bool(&v)?,
+            None => true,
+        };
 
         let config = Self {
             app_env,
@@ -164,6 +175,7 @@ impl Config {
             scheduler_enabled,
             internal_api_token,
             static_dir,
+            run_migrations,
         };
         config.validate_for_prod()?;
         Ok(config)
@@ -304,6 +316,7 @@ mod tests {
             scheduler_enabled: false,
             internal_api_token: Some("tok".into()),
             static_dir: None,
+            run_migrations: false,
         }
     }
 

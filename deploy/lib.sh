@@ -25,7 +25,7 @@ require_vars() {
 }
 
 # Derived, reused everywhere.
-require_vars PROJECT_ID REGION AR_REPO SQL_INSTANCE DB_NAME DB_USER RUN_SERVICE RUN_SA
+require_vars PROJECT_ID REGION AR_REPO SQL_INSTANCE DB_NAME DB_USER DB_OWNER RUN_SERVICE RUN_SA
 export SQL_CONN="${PROJECT_ID}:${REGION}:${SQL_INSTANCE}"
 export IMAGE_REPO="${REGION}-docker.pkg.dev/${PROJECT_ID}/${AR_REPO}/api"
 export RUN_SA_EMAIL="${RUN_SA}@${PROJECT_ID}.iam.gserviceaccount.com"

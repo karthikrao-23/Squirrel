@@ -40,6 +40,7 @@ fn test_config() -> api::config::Config {
         scheduler_enabled: false,
         internal_api_token: None,
         static_dir: None,
+        run_migrations: true,
     }
 }
 

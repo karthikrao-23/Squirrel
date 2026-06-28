@@ -114,7 +114,13 @@ pub async fn serve() -> anyhow::Result<()> {
     tracing::info!(env = ?config.app_env, plaid_env = ?config.plaid_env, "starting api");
 
     let pool = db::connect(&config.database_url).await?;
-    db::run_migrations(&pool).await?;
+    // In production the runtime DB role is DML-only and migrations are applied
+    // separately by the `migrate` job (as the schema owner); locally we auto-apply.
+    if config.run_migrations {
+        db::run_migrations(&pool).await?;
+    } else {
+        tracing::info!("RUN_MIGRATIONS=false — skipping boot migrations (applied out-of-band)");
+    }
 
     // Cloud Run injects PORT; honor it over BIND_ADDR when present.
     let bind_addr = match config.port {
@@ -138,6 +144,42 @@ pub async fn serve() -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
     tracing::info!(addr = %bind_addr, "listening");
     axum::serve(listener, app).await?;
+    Ok(())
+}
+
+/// One-off migration entry point (`api migrate`), run as the schema **owner** by
+/// a Cloud Run Job before/around a deploy — never by the public service.
+///
+/// Reads `DATABASE_URL` directly (owner credentials) rather than the full
+/// [`Config`], so it doesn't depend on the runtime secret set / prod guard. After
+/// applying migrations it optionally provisions the DML-only runtime role from
+/// `RUNTIME_DB_USER` + `RUNTIME_DB_PASSWORD`, so the public service can connect
+/// with least privilege. Both steps are idempotent.
+pub async fn migrate() -> anyhow::Result<()> {
+    let _ = dotenvy::dotenv();
+    init_tracing();
+
+    let database_url = std::env::var("DATABASE_URL")
+        .map_err(|_| anyhow::anyhow!("migrate: DATABASE_URL is required (owner credentials)"))?;
+    let pool = db::connect(&database_url).await?;
+    db::run_migrations(&pool).await?;
+
+    match (
+        std::env::var("RUNTIME_DB_USER")
+            .ok()
+            .filter(|s| !s.is_empty()),
+        std::env::var("RUNTIME_DB_PASSWORD")
+            .ok()
+            .filter(|s| !s.is_empty()),
+    ) {
+        (Some(role), Some(password)) => {
+            db::provision_runtime_role(&pool, &role, &password).await?;
+        }
+        (None, None) => {
+            tracing::info!("RUNTIME_DB_USER unset — migrations applied, runtime role unchanged");
+        }
+        _ => anyhow::bail!("migrate: set both RUNTIME_DB_USER and RUNTIME_DB_PASSWORD, or neither"),
+    }
     Ok(())
 }
 
