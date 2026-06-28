@@ -1,15 +1,89 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useAccounts, useProfile, useSandboxConnect, useUpdateProfile } from "../api/hooks";
+import { usePlaidLink } from "react-plaid-link";
+import {
+  useAccounts,
+  useExchange,
+  useLinkToken,
+  useProfile,
+  useSandboxConnect,
+  useUpdateProfile,
+} from "../api/hooks";
 import { FILING_STATUS_LABELS, type FilingStatus } from "../api/types";
 
 const STATUSES = Object.keys(FILING_STATUS_LABELS) as FilingStatus[];
+
+/** Step 1 connect: real Plaid Link (primary) plus a dev-only sandbox shortcut. */
+function ConnectStep() {
+  // Fetch a Link token up front so the button is ready to open Plaid Link.
+  const linkToken = useLinkToken(true);
+  const exchange = useExchange();
+  const sandbox = useSandboxConnect();
+  const token = linkToken.data?.link_token ?? null;
+
+  const { open, ready } = usePlaidLink({
+    token,
+    // Plaid returns a short-lived public_token; the backend exchanges it, stores
+    // the item, and runs the initial sync inline (so success = portfolio ready).
+    onSuccess: (publicToken) => exchange.mutate(publicToken),
+  });
+
+  const syncing = exchange.isPending || sandbox.isPending;
+  const error =
+    (linkToken.error as Error | null) ||
+    (exchange.error as Error | null) ||
+    (sandbox.error as Error | null);
+
+  return (
+    <>
+      <p className="muted" style={{ marginTop: 0 }}>
+        Link a brokerage to import holdings and transactions. We never see your password — Plaid
+        returns a token we exchange server-side.
+      </p>
+      <div className="flex">
+        <button
+          className="btn primary lg"
+          disabled={!ready || !token || syncing}
+          onClick={() => open()}
+        >
+          {exchange.isPending
+            ? "Syncing your portfolio…"
+            : linkToken.isLoading
+              ? "Preparing…"
+              : "Connect a brokerage"}
+        </button>
+        {/* Dev-only: the sandbox shortcut isn't in the production bundle, and the
+            backend 403s it outside development anyway. */}
+        {import.meta.env.DEV && (
+          <button
+            className="btn lg"
+            style={{ marginLeft: 8 }}
+            disabled={syncing}
+            onClick={() => sandbox.mutate()}
+          >
+            {sandbox.isPending ? "Connecting…" : "Dev: sandbox shortcut"}
+          </button>
+        )}
+      </div>
+      {syncing && (
+        <div className="faint mt16" style={{ fontSize: 13 }}>
+          Importing holdings + transactions and reconstructing tax lots — this can take a few
+          seconds.
+        </div>
+      )}
+      {error && (
+        <div className="loss mt16" style={{ fontSize: 13 }}>
+          {error.message}
+        </div>
+      )}
+    </>
+  );
+}
 
 export function Onboarding() {
   const navigate = useNavigate();
   const accounts = useAccounts();
   const profile = useProfile();
-  const connect = useSandboxConnect();
   const updateProfile = useUpdateProfile();
 
   const connected = (accounts.data?.length ?? 0) > 0;
@@ -64,7 +138,7 @@ export function Onboarding() {
         <div className="card mt16">
           <div className="card-head">
             <h2>1 · Connect your brokerage</h2>
-            <span className="api">POST /api/plaid/sandbox/connect</span>
+            <span className="api">Plaid Link · POST /api/plaid/exchange</span>
           </div>
           <div className="card-body">
             {connected ? (
@@ -81,20 +155,7 @@ export function Onboarding() {
                 <span className="chip gain dot">Connected</span>
               </div>
             ) : (
-              <>
-                <p className="muted" style={{ marginTop: 0 }}>
-                  Link a sandbox brokerage to import holdings and transactions. We never see your password —
-                  Plaid returns a token we exchange server-side.
-                </p>
-                <button className="btn primary lg" disabled={connect.isPending} onClick={() => connect.mutate()}>
-                  {connect.isPending ? "Connecting & syncing…" : "Connect sandbox brokerage"}
-                </button>
-                {connect.isError && (
-                  <div className="loss mt16" style={{ fontSize: 13 }}>
-                    {(connect.error as Error).message}
-                  </div>
-                )}
-              </>
+              <ConnectStep />
             )}
           </div>
         </div>

@@ -9,6 +9,7 @@ import type {
   ConnectResponse,
   HarvestCandidate,
   Holding,
+  LinkTokenResp,
   SimulateReq,
   SimulateResp,
   TaxSummary,
@@ -137,16 +138,44 @@ export function useMarkRead() {
 }
 
 // ---- Onboarding (Plaid) ----
-// Uses the sandbox shortcut endpoint, which mints + exchanges + syncs in one
-// call — no Plaid Link JS needed to exercise the full flow with sandbox creds.
+
+/** Invalidate everything the dashboard derives from a fresh sync. */
+function invalidateAfterSync(qc: ReturnType<typeof useQueryClient>) {
+  qc.invalidateQueries({ queryKey: keys.accounts });
+  qc.invalidateQueries({ queryKey: keys.holdings });
+  qc.invalidateQueries({ queryKey: keys.summary });
+  qc.invalidateQueries({ queryKey: keys.harvest });
+}
+
+/** Fetch a Plaid Link token (only when `enabled`). Link tokens are short-lived
+ *  and single-use, so this isn't cached. */
+export const useLinkToken = (enabled: boolean) =>
+  useQuery({
+    queryKey: ["plaid", "link-token"],
+    queryFn: () => post<LinkTokenResp>("/api/plaid/link-token"),
+    enabled,
+    staleTime: 0,
+    gcTime: 0,
+    retry: false,
+  });
+
+/** Exchange a Plaid public token; the backend stores the item and runs the
+ *  initial sync inline, so success means the portfolio is ready. */
+export function useExchange() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (publicToken: string) =>
+      post<ConnectResponse>("/api/plaid/exchange", { public_token: publicToken }),
+    onSuccess: () => invalidateAfterSync(qc),
+  });
+}
+
+// Dev-only shortcut: mints + exchanges + syncs a sandbox item in one call, so
+// the flow can be exercised locally without opening Plaid Link.
 export function useSandboxConnect() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => post<ConnectResponse>("/api/plaid/sandbox/connect"),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: keys.accounts });
-      qc.invalidateQueries({ queryKey: keys.holdings });
-      qc.invalidateQueries({ queryKey: keys.summary });
-    },
+    onSuccess: () => invalidateAfterSync(qc),
   });
 }
