@@ -33,7 +33,14 @@ use tower_http::trace::TraceLayer;
 /// unbounded body is a cheap amplification lever; 64 KiB is ample for our JSON.
 const MAX_BODY_BYTES: usize = 64 * 1024;
 /// Hard per-request timeout, so a slow/stuck request can't pin a connection.
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
+///
+/// 60s (not 15s) because the Plaid connect/exchange path runs the **initial
+/// portfolio sync inline** — fetch holdings + page ~24 months of transactions +
+/// rebuild lots — which legitimately exceeds 15s for a real account. The argon2
+/// DoS surface is bounded separately by the body limit + per-IP rate limiting,
+/// and Cloud Run's max-instances cap, so a longer request ceiling is safe here.
+/// (A future async/background sync would let this drop back down.)
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Content-Security-Policy for the same-origin SPA. The bundle is served from
 /// our origin (`'self'`); inline styles are allowed because the UI uses React

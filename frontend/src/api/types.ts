@@ -143,6 +143,12 @@ export interface Alert {
   emailed_at: IsoDateTime | null;
 }
 
+// POST /api/plaid/link-token
+export interface LinkTokenResp {
+  link_token: string;
+  expiration: string;
+}
+
 // POST /api/plaid/sandbox/connect (and /exchange) response
 export interface ConnectResponse {
   item_id: string;
