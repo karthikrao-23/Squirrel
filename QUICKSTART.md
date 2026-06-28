@@ -3,6 +3,11 @@
 Get the app running on your machine in one command. For the full feature tour and
 architecture, see [`README.md`](README.md).
 
+**Supported platforms:** macOS and Linux (`apt` / `dnf` / `pacman` / `zypper`) run
+the scripts natively. On **Windows**, use **WSL2** (recommended — then follow the
+Linux path) or **Git Bash** with [winget](https://learn.microsoft.com/windows/package-manager/winget/)
+installed; `setup.sh` detects all of these.
+
 > ⚠️ **Not tax advice.** Every number is a decision-support estimate. Tax scope is
 > federal + California in v1.
 

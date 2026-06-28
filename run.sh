@@ -16,9 +16,9 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 
 # ---- pretty logging ---------------------------------------------------------
 if [[ -t 1 ]]; then
-  bold=$'\033[1m'; blue=$'\033[1;34m'; green=$'\033[1;32m'; red=$'\033[1;31m'; dim=$'\033[2m'; rst=$'\033[0m'
+  bold=$'\033[1m'; blue=$'\033[1;34m'; green=$'\033[1;32m'; yellow=$'\033[1;33m'; red=$'\033[1;31m'; dim=$'\033[2m'; rst=$'\033[0m'
 else
-  bold=''; blue=''; green=''; red=''; dim=''; rst=''
+  bold=''; blue=''; green=''; yellow=''; red=''; dim=''; rst=''
 fi
 log()  { printf '%s==>%s %s\n' "$blue" "$rst" "$*"; }
 ok()   { printf '%s ✓ %s%s\n'  "$green" "$*" "$rst"; }
@@ -29,6 +29,13 @@ case "${1:-}" in
 esac
 SETUP_ONLY=0
 [[ "${1:-}" == "--setup" ]] && SETUP_ONLY=1
+
+# Windows (Git Bash / MSYS): runnable best-effort, but WSL2 is the smooth path.
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*|Windows_NT)
+    printf '%s ! Windows detected — for the smoothest experience run this inside WSL2 (Ubuntu).%s\n' "$yellow" "$rst"
+    printf '%s   Continuing best-effort in this shell.%s\n' "$dim" "$rst" ;;
+esac
 
 # ---- 1. prerequisites -------------------------------------------------------
 log "Checking prerequisites"

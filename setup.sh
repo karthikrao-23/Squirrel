@@ -47,19 +47,33 @@ case "${1:-}" in
 esac
 
 # ---- platform detection -----------------------------------------------------
-OS="$(uname -s)"
-PM=""              # package manager
-PM_INSTALL=""      # install command prefix
-case "$OS" in
-  Darwin) PM="brew" ;;
+# PLATFORM is normalized (macOS|Linux|Windows|unknown); PM is the package manager.
+PLATFORM="unknown"
+PM=""              # brew | apt | dnf | pacman | zypper | winget
+PM_INSTALL=""      # install command prefix (the simple Linux managers only)
+case "$(uname -s)" in
+  Darwin) PLATFORM="macOS"; PM="brew" ;;
   Linux)
+    PLATFORM="Linux"
     if   command -v apt-get >/dev/null 2>&1; then PM="apt";    PM_INSTALL="sudo apt-get install -y"
     elif command -v dnf     >/dev/null 2>&1; then PM="dnf";    PM_INSTALL="sudo dnf install -y"
     elif command -v pacman  >/dev/null 2>&1; then PM="pacman"; PM_INSTALL="sudo pacman -S --noconfirm"
     elif command -v zypper  >/dev/null 2>&1; then PM="zypper"; PM_INSTALL="sudo zypper install -y"
     fi ;;
-  *) warn "unrecognized OS '$OS' — I can check, but you'll install manually." ;;
+  MINGW*|MSYS*|CYGWIN*|Windows_NT)
+    PLATFORM="Windows"
+    command -v winget >/dev/null 2>&1 && PM="winget" ;;
+  *) warn "unrecognized OS '$(uname -s)' — I can check, but you'll install manually." ;;
 esac
+
+# On Windows, the most reliable path is WSL2 (then everything follows the Linux
+# branch). We still run best-effort under Git Bash / MSYS via winget.
+if [[ "$PLATFORM" == "Windows" ]]; then
+  warn "Windows detected. Recommended: WSL2 — run 'wsl --install' in an admin"
+  warn "PowerShell, then run these scripts inside the Ubuntu shell (Linux path)."
+  warn "Continuing best-effort in this shell${PM:+ via $PM}."
+  [[ -z "$PM" ]] && warn "winget not found — install the prerequisites manually (links below)."
+fi
 
 # ---- consent ----------------------------------------------------------------
 # Ask before changing the system. --yes assumes yes; --check always declines.
@@ -77,11 +91,15 @@ brew_install() {  # brew_install <pkg> [--cask]
   if [[ "${2:-}" == "--cask" ]]; then brew install --cask "$1"; else brew install "$1"; fi
 }
 
-# Generic "install via this OS's package manager", used for node/openssl/curl.
-pm_install() {  # pm_install <brew-name> <linux-name>
+# Generic "install via this OS's package manager".
+winget_install() {  # winget_install <winget-id>
+  winget install --silent --accept-package-agreements --accept-source-agreements --id "$1"
+}
+pm_install() {  # pm_install <brew-name> <linux-name> <winget-id>
   case "$PM" in
     brew) brew_install "$1" ;;
     apt|dnf|pacman|zypper) eval "$PM_INSTALL $2" ;;
+    winget) winget_install "$3" ;;
     *) return 1 ;;
   esac
 }
@@ -92,6 +110,13 @@ pm_install() {  # pm_install <brew-name> <linux-name>
 ensure_rust() {
   if command -v cargo >/dev/null 2>&1; then ok "Rust (cargo $(cargo --version | awk '{print $2}'))"; return 0; fi
   warn "Rust (cargo) is missing"
+  if [[ "$PLATFORM" == "Windows" ]]; then
+    if [[ "$PM" == "winget" ]] && confirm "Install Rust via winget (Rustlang.Rustup)?"; then
+      winget_install Rustlang.Rustup
+      warn "Rust installed — open a new terminal so cargo is on PATH"; return 0
+    fi
+    return 1
+  fi
   if confirm "Install Rust via rustup (https://rustup.rs)?"; then
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
     # Make cargo usable for the rest of this script + tell the user about new shells.
@@ -118,6 +143,8 @@ ensure_node() {
       dnf)    sudo dnf install -y nodejs ;;
       pacman) sudo pacman -S --noconfirm nodejs npm ;;
       zypper) sudo zypper install -y nodejs ;;
+      winget) winget_install OpenJS.NodeJS.LTS
+              warn "Node.js installed — open a new terminal so node/npm are on PATH"; return 0 ;;
       *) warn "no known package manager — install Node 20+ from https://nodejs.org"; return 1 ;;
     esac
     command -v node >/dev/null 2>&1 && { ok "Node.js installed ($(node --version))"; return 0; }
@@ -125,11 +152,14 @@ ensure_node() {
   return 1
 }
 
-ensure_simple() {  # ensure_simple <command> <brew-name> <linux-name> <label>
-  if command -v "$1" >/dev/null 2>&1; then ok "$4"; return 0; fi
-  warn "$4 is missing"
-  if confirm "Install $4 via $PM?"; then
-    pm_install "$2" "$3" && command -v "$1" >/dev/null 2>&1 && { ok "$4 installed"; return 0; }
+ensure_simple() {  # ensure_simple <command> <brew-name> <linux-name> <winget-id> <label>
+  if command -v "$1" >/dev/null 2>&1; then ok "$5"; return 0; fi
+  warn "$5 is missing"
+  if confirm "Install $5 via $PM?"; then
+    if pm_install "$2" "$3" "$4"; then
+      # winget installs may not be on PATH until a new shell; accept optimistically.
+      if command -v "$1" >/dev/null 2>&1 || [[ "$PM" == "winget" ]]; then ok "$5 installed"; return 0; fi
+    fi
   fi
   return 1
 }
@@ -142,8 +172,8 @@ ensure_docker() {
     return 0
   fi
   warn "Docker is missing"
-  case "$OS" in
-    Darwin)
+  case "$PLATFORM" in
+    macOS)
       if confirm "Install Docker Desktop via Homebrew cask?"; then
         brew_install docker --cask
         warn "Docker Desktop installed — LAUNCH it once (Applications → Docker) to start the daemon, then re-run ./run.sh"
@@ -157,20 +187,27 @@ ensure_docker() {
         warn "added you to the 'docker' group — LOG OUT and back in (or 'newgrp docker') so it takes effect"
         return 0
       fi ;;
+    Windows)
+      if [[ "$PM" == "winget" ]] && confirm "Install Docker Desktop via winget?"; then
+        winget_install Docker.DockerDesktop
+        warn "Docker Desktop installed — enable the WSL2 backend, LAUNCH it once, then re-open this shell"
+        return 0
+      fi
+      warn "install Docker Desktop from https://www.docker.com/products/docker-desktop (enable the WSL2 backend)" ;;
   esac
   return 1
 }
 
 # ---- run --------------------------------------------------------------------
-log "Detected: $OS${PM:+ · package manager: $PM}"
+log "Detected: $PLATFORM${PM:+ · package manager: $PM}"
 (( CHECK_ONLY )) && log "Check-only mode — reporting status, installing nothing."
 
 still_missing=()
-ensure_rust                                   || still_missing+=("Rust (https://rustup.rs)")
-ensure_node                                   || still_missing+=("Node.js 20+ (https://nodejs.org)")
-ensure_simple openssl openssl openssl openssl || still_missing+=("openssl")
-ensure_simple curl curl curl curl             || still_missing+=("curl")
-ensure_docker                                 || still_missing+=("Docker (https://www.docker.com/products/docker-desktop)")
+ensure_rust                                                   || still_missing+=("Rust (https://rustup.rs)")
+ensure_node                                                   || still_missing+=("Node.js 20+ (https://nodejs.org)")
+ensure_simple openssl openssl openssl ShiningLight.OpenSSL.Light openssl || still_missing+=("openssl")
+ensure_simple curl    curl    curl    cURL.cURL               curl    || still_missing+=("curl")
+ensure_docker                                                 || still_missing+=("Docker (https://www.docker.com/products/docker-desktop)")
 
 echo
 if (( ${#still_missing[@]} == 0 )); then
