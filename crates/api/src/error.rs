@@ -56,13 +56,18 @@ impl IntoResponse for AppError {
         if status == StatusCode::INTERNAL_SERVER_ERROR {
             tracing::error!(error = %self, "request failed");
         }
-        // Don't leak upstream (Plaid) internals to the client; log them above and
-        // return a generic body. Other arms expose their own (safe) message.
+        // Never return internal detail to the client. The 500-class arms (`Db`,
+        // `Other`) carry schema/constraint names and internal error chains, and
+        // `Plaid` carries upstream internals — all are logged above/here and
+        // replaced with a fixed generic body. The remaining arms (`BadRequest`,
+        // `Conflict`, `Forbidden`, `Unauthorized`, `NotFound`) carry only
+        // deliberate, client-actionable messages, so they pass through.
         let body = match &self {
             AppError::Plaid(e) => {
                 tracing::error!(error = %e, "plaid upstream error");
                 "upstream error".to_string()
             }
+            AppError::Db(_) | AppError::Other(_) => "internal error".to_string(),
             other => other.to_string(),
         };
         (status, Json(json!({ "error": body }))).into_response()

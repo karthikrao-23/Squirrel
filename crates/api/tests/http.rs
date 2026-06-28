@@ -608,6 +608,46 @@ async fn mutation_with_foreign_origin_is_403(pool: PgPool) {
     assert_eq!(resp.status, StatusCode::FORBIDDEN);
 }
 
+#[sqlx::test(migrations = "../../migrations")]
+async fn mutation_with_prefix_lookalike_referer_is_403(pool: PgPool) {
+    let app = app(pool);
+    let (cookie, _) = auth(&app, "referer@example.com").await;
+    // No Origin, and a Referer whose host only *prefixes* ours
+    // (`http://app.test` vs `http://app.test.evil.test`). A naive `starts_with`
+    // would accept this; the origin-boundary check must reject it.
+    let resp = request_with_headers(
+        &app,
+        "PATCH",
+        "/api/profile",
+        Some(&cookie),
+        true,
+        None,
+        Some(json!({ "filing_status": "single" })),
+        &[("referer", "http://app.test.evil.test/dashboard")],
+    )
+    .await;
+    assert_eq!(resp.status, StatusCode::FORBIDDEN);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn mutation_with_same_origin_referer_is_allowed(pool: PgPool) {
+    let app = app(pool);
+    let (cookie, _) = auth(&app, "referer-ok@example.com").await;
+    // A genuine same-origin Referer (origin followed by a path) passes the guard.
+    let resp = request_with_headers(
+        &app,
+        "PATCH",
+        "/api/profile",
+        Some(&cookie),
+        true,
+        None,
+        Some(json!({ "filing_status": "single" })),
+        &[("referer", "http://app.test/settings")],
+    )
+    .await;
+    assert_eq!(resp.status, StatusCode::OK);
+}
+
 // ============================ Profile / portfolio / tax ======================
 
 #[sqlx::test(migrations = "../../migrations")]

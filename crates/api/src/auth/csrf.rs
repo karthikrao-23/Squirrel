@@ -61,8 +61,14 @@ pub async fn csrf_guard(State(state): State<AppState>, req: Request, next: Next)
             .and_then(|v| v.to_str().ok())
             .filter(|s| !s.is_empty())
         {
-            // Referer carries a full URL; it's same-origin iff it's under us.
-            if !referer.starts_with(expected) {
+            // Referer carries a full URL; it's same-origin iff its origin is
+            // exactly `expected`. A bare `starts_with` would wrongly accept
+            // `https://app.example.com.evil.com/…`, so the origin must be
+            // followed by a path/query/fragment boundary (or be the whole value).
+            let same_origin = referer
+                .strip_prefix(expected)
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with(['/', '?', '#']));
+            if !same_origin {
                 return reject("cross-origin request rejected");
             }
         }

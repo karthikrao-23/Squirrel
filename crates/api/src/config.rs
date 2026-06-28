@@ -189,6 +189,12 @@ impl Config {
         if self.internal_api_token.is_none() {
             missing.push("INTERNAL_API_TOKEN");
         }
+        // Required so the CSRF guard's Origin/Referer check is actually active in
+        // production — without it the guard silently falls back to the custom
+        // header alone (see `auth::csrf`).
+        if self.app_origin.is_none() {
+            missing.push("APP_ORIGIN");
+        }
         if !missing.is_empty() {
             return Err(anyhow::anyhow!(
                 "APP_ENV=production but required secrets are missing: {}",
@@ -312,6 +318,14 @@ mod tests {
         c.internal_api_token = None;
         let err = c.validate_for_prod().unwrap_err().to_string();
         assert!(err.contains("INTERNAL_API_TOKEN"), "{err}");
+    }
+
+    #[test]
+    fn prod_guard_fails_on_missing_app_origin() {
+        let mut c = prod_config();
+        c.app_origin = None;
+        let err = c.validate_for_prod().unwrap_err().to_string();
+        assert!(err.contains("APP_ORIGIN"), "{err}");
     }
 
     #[test]
