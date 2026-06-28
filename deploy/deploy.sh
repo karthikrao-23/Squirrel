@@ -28,11 +28,14 @@ fi
 
 # Plain env. STATIC_DIR is also baked into the image; set explicitly for clarity.
 # SCHEDULER_ENABLED=false — Cloud Scheduler drives the cycle in prod.
+# RUN_MIGRATIONS=false — the runtime role is DML-only; migrate.sh applies schema
+# changes as the owner. (Run migrate.sh before this whenever a release migrates.)
 envs="APP_ENV=${APP_ENV}"
 envs+=",PLAID_ENV=${PLAID_ENV}"
 envs+=",RUST_LOG=info"
 envs+=",STATIC_DIR=/app/dist"
 envs+=",SCHEDULER_ENABLED=false"
+envs+=",RUN_MIGRATIONS=false"
 envs+=",APP_ORIGIN=${BASE_URL}"
 envs+=",PLAID_WEBHOOK_URL=${BASE_URL}/api/plaid/webhook"
 
