@@ -130,31 +130,55 @@ service; `tsc --noEmit` + `vite build` for the frontend) · `cargo-llvm-cov` cov
 
 ## Getting started
 
-> **Just want to run it?** Clone the repo, then `./setup.sh` (checks/installs the
-> prerequisites below) and `./run.sh` (creates `.env`, starts Postgres, installs
-> the frontend deps, and launches both servers). See [`QUICKSTART.md`](QUICKSTART.md).
-> The manual steps below are the same thing, broken out.
+### Quick start (one command)
+
+```bash
+git clone https://github.com/karthikrao-23/Squirrel.git
+cd Squirrel
+./setup.sh     # checks + installs missing prerequisites (Rust, Node, Docker, openssl)
+./run.sh       # creates .env, starts Postgres, installs frontend deps, runs both servers
+```
+
+Then open **http://localhost:5173**, **sign up**, and connect a brokerage. Stop
+with **Ctrl-C** (Postgres keeps running; `docker compose down` stops it).
+
+- Runs natively on **macOS** and **Linux** (`apt`/`dnf`/`pacman`/`zypper`). On
+  **Windows**, use **WSL2** (recommended) or **Git Bash + winget**.
+- `./setup.sh --check` reports what's missing without installing; `--yes` installs
+  unattended. `./run.sh --setup` prepares everything but doesn't start the servers.
+- Full walkthrough, the Plaid-sandbox step, and troubleshooting:
+  [`QUICKSTART.md`](QUICKSTART.md).
 
 ### Prerequisites
-- Rust (via [rustup](https://rustup.rs)) · Node 22+ · Docker (for Postgres)
-- A free [Plaid sandbox](https://dashboard.plaid.com) account (client_id + secret) for the connect flow
+
+`./setup.sh` installs these for you; listed here if you'd rather do it yourself:
+
+- Rust (via [rustup](https://rustup.rs)) · Node 20+ · Docker (for Postgres) · openssl
+- A free [Plaid sandbox](https://dashboard.plaid.com) account (client_id + secret)
+  for the connect flow — add `PLAID_CLIENT_ID` / `PLAID_SECRET` to `.env`
 - *(optional)* SMTP creds (e.g. [Mailtrap](https://mailtrap.io)) to actually send alert emails
 
-### Backend
+### Manual setup
+
+Equivalent to what `./run.sh` does, broken out.
+
+**Backend**
 ```bash
 docker compose up -d                 # Postgres (taxloss/taxloss, db taxloss)
-cp .env.example .env                 # then fill in PLAID_* (and SMTP_* if you want email)
+cp .env.example .env                 # add PLAID_*; generate a key:
+                                     #   openssl rand -base64 32  → TOKEN_ENCRYPTION_KEY
 cargo run -p api                     # migrations auto-run on startup; serves :8080
 ```
 
-### Frontend
+**Frontend**
 ```bash
 cd frontend
 npm install
 npm run dev                          # Vite :5173, proxies /api → :8080
 ```
-Open http://localhost:5173. With no brokerage connected you'll land on onboarding;
-the **Connect sandbox brokerage** button runs the full Plaid sandbox sync.
+
+Open http://localhost:5173, **sign up**, then **Connect a brokerage** (Plaid Link).
+In sandbox, pick any institution and log in with **`user_good` / `pass_good`**.
 
 ### Checks (mirror CI)
 ```bash
@@ -162,6 +186,7 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace               # needs DATABASE_URL set (Postgres up)
 cd frontend && npm run build         # tsc --noEmit + vite build
+bash -n setup.sh && bash -n run.sh   # shell scripts (also linted in CI on macOS + Ubuntu)
 ```
 
 ---
