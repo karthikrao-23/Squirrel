@@ -61,22 +61,27 @@ shapes directly.
 
 ### Data model (Postgres)
 
-8 tables: `users`, `plaid_items`, `accounts`, `securities`, `holdings`,
-`transactions`, `tax_lots`, `alerts`. Two deliberate decisions:
+9 tables: `users`, `sessions`, `plaid_items`, `accounts`, `securities`,
+`holdings`, `transactions`, `tax_lots`, `alerts`. Two deliberate decisions:
 
-- **Every user-owned table carries `user_id`** even though v1 is single-user — going
-  multi-user later is an auth change, not a schema rewrite.
+- **Every user-owned table carries `user_id`**, so the app is **multi-user**: each
+  request is scoped to the authenticated user, and Plaid uniques are composite
+  (`(user_id, plaid_*_id)`) so tenants can't collide.
 - **`tax_lots` are derived**, not from Plaid — reconstructed FIFO from transactions.
 
 ---
 
 ## API reference
 
-REST/JSON, all under `/api`. v1 resolves the user server-side (real auth is a later milestone).
+REST/JSON, all under `/api`. Requests are authenticated with an opaque,
+`HttpOnly`, `SameSite=Strict` session cookie; mutating routes additionally require
+a CSRF header + Origin check. Every data route is scoped to the signed-in user.
 
 | Area | Endpoint | Purpose |
 |---|---|---|
 | Health | `GET /health` | liveness + DB/Plaid status |
+| Auth | `POST /api/auth/signup` · `POST /api/auth/login` | create account / sign in (sets session cookie) |
+| | `POST /api/auth/logout` · `POST /api/auth/logout-all` · `GET /api/auth/me` | end session(s) · current user |
 | Onboarding | `POST /api/plaid/link-token` | mint a Plaid Link token |
 | | `POST /api/plaid/exchange` | swap `public_token`, store encrypted item, initial sync |
 | | `POST /api/plaid/sandbox/connect` | dev shortcut: mint + exchange + sync (sandbox) |
@@ -202,11 +207,14 @@ bash -n setup.sh && bash -n run.sh   # shell scripts (also linted in CI on macOS
 | M5 | Alerts + cron scheduler + email | ✅ |
 | M6 | UI/UX design gate (mocks + endpoint map) | ✅ |
 | M7 | React frontend | ✅ |
-| M8 | Productization: auth, multi-user, secrets, deploy | ⏳ |
+| M8 | Productization: auth, multi-user, secrets, deploy | ✅ |
 
-**Known follow-ups:** real Plaid Link UI (replacing the sandbox-connect shortcut),
-a portfolio value-history endpoint to back the dashboard's performance chart, and
-realized-gains tracking (v1 reconstructs open lots only).
+**Done since:** real Plaid Link onboarding, DB-backed auth + per-user tenant
+isolation, Plaid webhook signature verification, and container + Cloud Run /
+Cloud SQL deploy scripts.
+
+**Known follow-ups:** a portfolio value-history endpoint to back the dashboard's
+performance chart, and realized-gains tracking (v1 reconstructs open lots only).
 
 ---
 
