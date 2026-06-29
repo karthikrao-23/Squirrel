@@ -111,15 +111,20 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-log "Building + starting the backend (cargo run -p api) — the first build can take a minute"
+# Build first (no time pressure — the first build downloads crates and compiles
+# the whole workspace, which can take several minutes), then start + health-wait.
+log "Building the backend (cargo build -p api) — the first build can take a few minutes"
+cargo build -p api
+
+log "Starting the backend (cargo run -p api)"
 cargo run -p api &
 backend_pid=$!
 
 log "Waiting for the API to come up on :8080"
-for i in $(seq 1 180); do
+for i in $(seq 1 60); do
   if curl -fsS http://localhost:8080/health >/dev/null 2>&1; then ok "backend healthy on :8080"; break; fi
   kill -0 "$backend_pid" 2>/dev/null || die "the backend exited before becoming healthy (see the log above)"
-  [[ "$i" -eq 180 ]] && die "backend didn't become healthy in time"
+  [[ "$i" -eq 60 ]] && die "backend didn't become healthy in time"
   sleep 1
 done
 

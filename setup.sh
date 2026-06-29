@@ -104,6 +104,53 @@ pm_install() {  # pm_install <brew-name> <linux-name> <winget-id>
   esac
 }
 
+# Fallback Node install: the official prebuilt binary from nodejs.org, into
+# /usr/local. Used when the package manager can't provide Node (e.g. Homebrew has
+# no bottle on a pre-release macOS, or an unusual Linux distro). Works on any
+# macOS/Linux version for x64/arm64.
+install_node_binary() {
+  local os arch
+  case "$PLATFORM" in macOS) os=darwin ;; Linux) os=linux ;; *) return 1 ;; esac
+  case "$(uname -m)" in
+    arm64|aarch64) arch=arm64 ;;
+    x86_64|amd64)  arch=x64 ;;
+    *) warn "no Node binary for arch $(uname -m)"; return 1 ;;
+  esac
+  # Latest v22 LTS from the dist index, with a pinned fallback if that lookup fails.
+  local ver
+  ver="$(curl -fsSL https://nodejs.org/dist/index.json 2>/dev/null \
+        | grep -o '"version":"v22[0-9.]*"' | head -1 | cut -d'"' -f4)"
+  ver="${ver:-v22.12.0}"
+  local pkg="node-${ver}-${os}-${arch}" tmp
+  tmp="$(mktemp -d)"
+  log "Downloading Node ${ver} (${os}-${arch}) from nodejs.org"
+  if ! curl -fsSL "https://nodejs.org/dist/${ver}/${pkg}.tar.gz" -o "$tmp/node.tgz"; then
+    rm -rf "$tmp"; return 1
+  fi
+  tar -xzf "$tmp/node.tgz" -C "$tmp" || { rm -rf "$tmp"; return 1; }
+  # Install into /usr/local, per-subdir. bin + lib are all that's needed to run
+  # node/npm; include + share (native-addon headers, man pages) are best-effort.
+  # sudo is used only for a target that isn't already user-writable.
+  local rc=0
+  _cp_sub() {  # _cp_sub <subdir> <required?>
+    local sub="$1" required="$2" s=""
+    [[ -d "$tmp/$pkg/$sub" ]] || return 0
+    if [[ -w "/usr/local/$sub" ]] || { [[ ! -e "/usr/local/$sub" ]] && [[ -w /usr/local ]]; }; then s=""; else s="sudo"; fi
+    if $s mkdir -p "/usr/local/$sub" 2>/dev/null && $s cp -R "$tmp/$pkg/$sub/." "/usr/local/$sub/" 2>/dev/null; then
+      return 0
+    fi
+    [[ "$required" == "required" ]] && rc=1
+    return 0
+  }
+  _cp_sub bin required
+  _cp_sub lib required
+  _cp_sub include optional
+  _cp_sub share optional
+  rm -rf "$tmp"
+  hash -r 2>/dev/null || true
+  return $rc
+}
+
 # ---- per-tool handlers ------------------------------------------------------
 # Each returns 0 if usable (already present or installed), 1 if still missing.
 
@@ -145,9 +192,16 @@ ensure_node() {
       zypper) sudo zypper install -y nodejs ;;
       winget) winget_install OpenJS.NodeJS.LTS
               warn "Node.js installed — open a new terminal so node/npm are on PATH"; return 0 ;;
-      *) warn "no known package manager — install Node 20+ from https://nodejs.org"; return 1 ;;
+      *) ;;  # no package manager — fall through to the binary install below
     esac
     command -v node >/dev/null 2>&1 && { ok "Node.js installed ($(node --version))"; return 0; }
+    # Package manager couldn't provide Node (missing bottle, odd distro, no PM):
+    # fall back to the official prebuilt binary.
+    if [[ "$PLATFORM" == "macOS" || "$PLATFORM" == "Linux" ]]; then
+      warn "package manager didn't provide Node — falling back to the nodejs.org binary"
+      install_node_binary && command -v node >/dev/null 2>&1 \
+        && { ok "Node.js installed ($(node --version))"; return 0; }
+    fi
   fi
   return 1
 }
