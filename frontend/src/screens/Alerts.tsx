@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useAlerts, useMarkRead } from "../api/hooks";
 import type { Alert } from "../api/types";
-import { ApiPill, Card, EmptyState, ErrorState, Spinner } from "../components/ui";
+import { Card, EmptyState, ErrorState, Spinner } from "../components/ui";
 import { money, relativeTime } from "../lib/format";
 
 function isLongTerm(a: Alert) {
@@ -25,9 +25,7 @@ export function Alerts() {
     <div className="app" style={{ maxWidth: 820 }}>
       <div className="page-head">
         <h1>Alerts</h1>
-        <p>
-          Tax-aware sell &amp; harvest signals from the nightly scheduler. <ApiPill>GET /api/alerts</ApiPill>
-        </p>
+        <p>Tax-aware sell &amp; harvest signals from the nightly scheduler.</p>
       </div>
 
       <div className="toolbar">

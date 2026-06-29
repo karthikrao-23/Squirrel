@@ -138,7 +138,6 @@ export function Onboarding() {
         <div className="card mt16">
           <div className="card-head">
             <h2>1 · Connect your brokerage</h2>
-            <span className="api">Plaid Link · POST /api/plaid/exchange</span>
           </div>
           <div className="card-body">
             {connected ? (
@@ -164,7 +163,6 @@ export function Onboarding() {
         <div className="card mt16" style={{ opacity: connected ? 1 : 0.55 }}>
           <div className="card-head">
             <h2>2 · Your tax profile</h2>
-            <span className="api">PATCH /api/profile</span>
           </div>
           <div className="card-body">
             <div className="field">
