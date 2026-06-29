@@ -159,8 +159,11 @@ with **Ctrl-C** (Postgres keeps running; `docker compose down` stops it).
 `./setup.sh` installs these for you; listed here if you'd rather do it yourself:
 
 - Rust (via [rustup](https://rustup.rs)) · Node 20+ · Docker (for Postgres) · openssl
-- A free [Plaid sandbox](https://dashboard.plaid.com) account (client_id + secret)
-  for the connect flow — add `PLAID_CLIENT_ID` / `PLAID_SECRET` to `.env`
+- A free [Plaid](https://dashboard.plaid.com) account for the connect flow. Start in
+  **sandbox** (fake data, log in with `user_good` / `pass_good`); switch to
+  **production** with a Plaid trial to connect a real brokerage. Your `client_id` is
+  the same in both; the **secret differs per environment** and must match `PLAID_ENV`.
+  See [`QUICKSTART.md`](QUICKSTART.md#3-connecting-a-brokerage-plaid) for the details.
 - *(optional)* SMTP creds (e.g. [Mailtrap](https://mailtrap.io)) to actually send alert emails
 
 ### Manual setup
