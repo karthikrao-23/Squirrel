@@ -101,8 +101,8 @@ if (( SETUP_ONLY )); then
 fi
 
 # ---- 5. run backend + frontend ---------------------------------------------
-# Load .env so DATABASE_URL etc. are present for cargo (the binary also reads it).
-set -a; source .env; set +a
+# The backend loads .env itself (via dotenvy), so we deliberately do NOT `source`
+# it here — bash would choke on values with spaces/globs (e.g. the cron string).
 
 backend_pid=""
 cleanup() {

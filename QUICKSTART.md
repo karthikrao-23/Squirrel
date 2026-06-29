@@ -52,21 +52,45 @@ When it's up, open **<http://localhost:5173>**, **sign up**, then connect a brok
 Stop everything with **Ctrl-C**. Postgres keeps running in the background; stop it
 with `docker compose down`.
 
-## 3. Connecting a brokerage (Plaid sandbox)
+## 3. Connecting a brokerage (Plaid)
 
-Squirrel imports holdings and transactions through [Plaid](https://plaid.com). To
-use the **"Connect a brokerage"** flow you need free **Plaid sandbox** credentials:
+Squirrel imports holdings and transactions through [Plaid](https://plaid.com).
+Plaid has two environments, and which one you use decides whether you're working
+with fake or real accounts:
 
-1. Sign up at <https://dashboard.plaid.com> and copy your **client_id** and a
-   **sandbox secret**.
-2. Add them to `.env`:
-   ```bash
-   PLAID_CLIENT_ID=your_client_id
-   PLAID_SECRET=your_sandbox_secret
-   ```
-3. Restart with `./run.sh`.
-4. In Plaid Link, pick any sandbox institution and log in with the sandbox
-   credentials **`user_good` / `pass_good`**.
+| | **Sandbox** (recommended to start) | **Production** (real accounts) |
+|---|---|---|
+| What connects | Plaid's fake test banks | your actual brokerage |
+| Login in Plaid Link | `user_good` / `pass_good` | your real bank credentials |
+| Cost / access | free, instant | needs Plaid **production access** (a trial grants this) |
+| `.env` setting | `PLAID_ENV=sandbox` | `PLAID_ENV=production` |
+
+> **The key gotcha:** your **`client_id` is the same** in both environments, but the
+> **`secret` is different** — the Plaid dashboard gives you a separate *Sandbox*
+> secret and *Production* secret. `PLAID_SECRET` must match `PLAID_ENV`, or Plaid
+> rejects the calls.
+
+Get both at <https://dashboard.plaid.com> → **Developers → Keys**, then:
+
+**Sandbox** (try it with fake data):
+```bash
+PLAID_ENV=sandbox
+PLAID_CLIENT_ID=your_client_id
+PLAID_SECRET=your_sandbox_secret
+```
+Restart with `./run.sh`, click **Connect a brokerage**, pick any institution, and
+log in with **`user_good` / `pass_good`**. (In dev there's also a one-click
+**"Dev: sandbox shortcut"** button that skips the Plaid Link UI.)
+
+**Production / Plaid trial** (connect your real brokerage — works locally too):
+```bash
+PLAID_ENV=production
+PLAID_CLIENT_ID=your_client_id
+PLAID_SECRET=your_production_secret
+```
+Restart with `./run.sh` and connect your actual account through Plaid Link. Leave
+`APP_ENV` unset (development) — that keeps local cookies working; you're only
+switching *Plaid*, not the app's security posture.
 
 The app runs fine without Plaid keys — you just can't import a portfolio until you
 add them.
