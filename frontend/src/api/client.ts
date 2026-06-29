@@ -22,14 +22,18 @@ export class UnauthorizedError extends Error {
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const method = (init?.method ?? "GET").toUpperCase();
   const mutating = method !== "GET" && method !== "HEAD";
+  const hasBody = init?.body != null;
 
   const res = await fetch(path, {
+    ...init,
     headers: {
-      "Content-Type": "application/json",
+      // Only declare a JSON body when we actually send one. Sending
+      // `Content-Type: application/json` with an empty body makes optional-JSON
+      // extractors (e.g. POST /api/plaid/sandbox/connect) fail to parse "".
+      ...(hasBody ? { "Content-Type": "application/json" } : {}),
       ...(mutating ? { [CSRF_HEADER]: "1" } : {}),
       ...(init?.headers ?? {}),
     },
-    ...init,
   });
 
   if (res.status === 401) throw new UnauthorizedError();
