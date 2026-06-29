@@ -190,12 +190,6 @@ td.r, th.r { text-align: right; }
 .mt8 { margin-top: 8px; } .mt16 { margin-top: 16px; } .mt24 { margin-top: 24px; }
 hr.sep { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
 
-/* Endpoint annotation pill — shows which API feeds a block (design-doc aid). */
-.api {
-  font-family: var(--mono); font-size: 11px; color: var(--brand-ink);
-  background: var(--brand-wash); border-radius: 4px; padding: 1px 6px;
-}
-
 /* Stepper (onboarding) */
 .stepper { display: flex; align-items: center; gap: 0; margin: 8px 0 28px; }
 .step { display: flex; align-items: center; gap: 8px; color: var(--text-faint); }

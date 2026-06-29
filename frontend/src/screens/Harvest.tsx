@@ -1,7 +1,6 @@
 import { useMemo, useState } from "react";
 import { useHarvest, useSimulate } from "../api/hooks";
 import {
-  ApiPill,
   Card,
   CardHead,
   Disclaimer,
@@ -46,10 +45,7 @@ export function Harvest() {
     <div className="app">
       <div className="page-head">
         <h1>Tax-loss harvesting</h1>
-        <p>
-          Lots trading below cost — selling realizes a loss that can offset gains.{" "}
-          <ApiPill>GET /api/tax/harvest</ApiPill>
-        </p>
+        <p>Lots trading below cost — selling realizes a loss that can offset gains.</p>
       </div>
 
       <Disclaimer>
@@ -121,7 +117,7 @@ export function Harvest() {
 
         {/* Simulator — POST /api/tax/simulate */}
         <Card>
-          <CardHead title="Sell simulation" right={<ApiPill>POST /api/tax/simulate</ApiPill>} />
+          <CardHead title="Sell simulation" />
           <div className="card-body">
             <button
               className="btn primary block"

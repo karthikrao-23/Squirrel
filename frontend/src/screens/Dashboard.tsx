@@ -3,7 +3,7 @@ import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 import { useQueryClient } from "@tanstack/react-query";
 import { keys, useHoldings, useSummary } from "../api/hooks";
 import type { Holding } from "../api/types";
-import { ApiPill, Card, CardHead, Disclaimer, ErrorState, Money, Spinner, Stat } from "../components/ui";
+import { Card, CardHead, Disclaimer, ErrorState, Money, Spinner, Stat } from "../components/ui";
 import { fmtDate, money, num, qty } from "../lib/format";
 
 const DONUT_COLORS = ["#1f6feb", "#1a8a55", "#b7791f", "#8a93a1", "#7c5cff", "#0ea5a3"];
@@ -35,10 +35,7 @@ export function Dashboard() {
       <div className="page-head flex between">
         <div>
           <h1>Dashboard</h1>
-          <p>
-            {summary.data ? `As of ${fmtDate(summary.data.as_of)} · ` : ""}
-            <ApiPill>GET /api/tax/summary · GET /api/holdings</ApiPill>
-          </p>
+          <p>{summary.data ? `As of ${fmtDate(summary.data.as_of)}` : ""}</p>
         </div>
         <button
           className="btn"
@@ -166,7 +163,7 @@ export function Dashboard() {
 
       {/* Holdings — GET /api/holdings */}
       <Card className="mt16">
-        <CardHead title="Holdings" right={<ApiPill>GET /api/holdings</ApiPill>} />
+        <CardHead title="Holdings" />
         {holdings.isLoading ? (
           <Spinner />
         ) : holdings.isError ? (

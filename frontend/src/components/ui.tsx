@@ -18,11 +18,6 @@ export function CardHead({ title, right }: { title: string; right?: ReactNode })
   );
 }
 
-/** A faint monospace pill noting which endpoint backs a block (matches the mocks). */
-export function ApiPill({ children }: { children: ReactNode }) {
-  return <span className="api">{children}</span>;
-}
-
 export function Stat({ label, value, sub }: { label: string; value: ReactNode; sub?: ReactNode }) {
   return (
     <div className="card stat">
