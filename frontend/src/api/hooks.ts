@@ -54,7 +54,7 @@ export function useLogout() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => post<void>("/api/auth/logout"),
-    onSuccess: () => qc.clear(),
+    onSuccess: () => onLoggedOut(qc),
   });
 }
 
@@ -62,8 +62,19 @@ export function useLogoutAll() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => post<void>("/api/auth/logout-all"),
-    onSuccess: () => qc.clear(),
+    onSuccess: () => onLoggedOut(qc),
   });
+}
+
+/** After logout: flip `me` to logged-out and drop every other cached query.
+ *  We *set* `me` to null (rather than `qc.clear()`) because clearing removes the
+ *  query without pushing an update to its active observer, so `<AuthGate>` would
+ *  keep rendering the stale logged-in user. setQueryData notifies the observer,
+ *  which re-renders straight to the login screen — mirroring how `onAuthed`
+ *  seeds `me` on login. */
+function onLoggedOut(qc: ReturnType<typeof useQueryClient>) {
+  qc.setQueryData(keys.me, null);
+  qc.removeQueries({ predicate: (q) => q.queryKey[0] !== "me" });
 }
 
 /** After a successful login/signup: seed `me`, then drop every other cached
