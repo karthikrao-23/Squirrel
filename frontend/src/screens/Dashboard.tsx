@@ -130,10 +130,13 @@ export function Dashboard() {
               <div className="faint">No priced holdings.</div>
             ) : (
               <>
-                <div style={{ width: 130, height: 130 }}>
+                {/* Fixed, non-shrinking box so the long legend can't squeeze the
+                    chart; percentage radii so the donut scales to fill it (a
+                    fixed pixel radius overflows + clips when the box shrinks). */}
+                <div style={{ flex: "0 0 130px", height: 130 }}>
                   <ResponsiveContainer>
                     <PieChart>
-                      <Pie data={allocation} dataKey="value" innerRadius={38} outerRadius={62} paddingAngle={2}>
+                      <Pie data={allocation} dataKey="value" innerRadius="55%" outerRadius="98%" paddingAngle={2}>
                         {allocation.map((_, i) => (
                           <Cell key={i} fill={DONUT_COLORS[i % DONUT_COLORS.length]} />
                         ))}
@@ -142,11 +145,16 @@ export function Dashboard() {
                     </PieChart>
                   </ResponsiveContainer>
                 </div>
-                <div className="legend">
+                <div className="legend" style={{ flex: 1, minWidth: 0 }}>
                   {allocation.map((r, i) => (
                     <div className="row" key={r.name}>
-                      <span className="sw" style={{ background: DONUT_COLORS[i % DONUT_COLORS.length] }} />
-                      {r.name} · {money(r.value)}
+                      <span
+                        className="sw"
+                        style={{ background: DONUT_COLORS[i % DONUT_COLORS.length], flexShrink: 0 }}
+                      />
+                      <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>
+                        {r.name} · {money(r.value)}
+                      </span>
                     </div>
                   ))}
                 </div>
