@@ -61,22 +61,27 @@ shapes directly.
 
 ### Data model (Postgres)
 
-8 tables: `users`, `plaid_items`, `accounts`, `securities`, `holdings`,
-`transactions`, `tax_lots`, `alerts`. Two deliberate decisions:
+9 tables: `users`, `sessions`, `plaid_items`, `accounts`, `securities`,
+`holdings`, `transactions`, `tax_lots`, `alerts`. Two deliberate decisions:
 
-- **Every user-owned table carries `user_id`** even though v1 is single-user — going
-  multi-user later is an auth change, not a schema rewrite.
+- **Every user-owned table carries `user_id`**, so the app is **multi-user**: each
+  request is scoped to the authenticated user, and Plaid uniques are composite
+  (`(user_id, plaid_*_id)`) so tenants can't collide.
 - **`tax_lots` are derived**, not from Plaid — reconstructed FIFO from transactions.
 
 ---
 
 ## API reference
 
-REST/JSON, all under `/api`. v1 resolves the user server-side (real auth is a later milestone).
+REST/JSON, all under `/api`. Requests are authenticated with an opaque,
+`HttpOnly`, `SameSite=Strict` session cookie; mutating routes additionally require
+a CSRF header + Origin check. Every data route is scoped to the signed-in user.
 
 | Area | Endpoint | Purpose |
 |---|---|---|
 | Health | `GET /health` | liveness + DB/Plaid status |
+| Auth | `POST /api/auth/signup` · `POST /api/auth/login` | create account / sign in (sets session cookie) |
+| | `POST /api/auth/logout` · `POST /api/auth/logout-all` · `GET /api/auth/me` | end session(s) · current user |
 | Onboarding | `POST /api/plaid/link-token` | mint a Plaid Link token |
 | | `POST /api/plaid/exchange` | swap `public_token`, store encrypted item, initial sync |
 | | `POST /api/plaid/sandbox/connect` | dev shortcut: mint + exchange + sync (sandbox) |
@@ -130,26 +135,55 @@ service; `tsc --noEmit` + `vite build` for the frontend) · `cargo-llvm-cov` cov
 
 ## Getting started
 
+### Quick start (one command)
+
+```bash
+git clone https://github.com/karthikrao-23/Squirrel.git
+cd Squirrel
+./setup.sh     # checks + installs missing prerequisites (Rust, Node, Docker, openssl)
+./run.sh       # creates .env, starts Postgres, installs frontend deps, runs both servers
+```
+
+Then open **http://localhost:5173**, **sign up**, and connect a brokerage. Stop
+with **Ctrl-C** (Postgres keeps running; `docker compose down` stops it).
+
+- Runs natively on **macOS** and **Linux** (`apt`/`dnf`/`pacman`/`zypper`). On
+  **Windows**, use **WSL2** (recommended) or **Git Bash + winget**.
+- `./setup.sh --check` reports what's missing without installing; `--yes` installs
+  unattended. `./run.sh --setup` prepares everything but doesn't start the servers.
+- Full walkthrough, the Plaid-sandbox step, and troubleshooting:
+  [`QUICKSTART.md`](QUICKSTART.md).
+
 ### Prerequisites
-- Rust (via [rustup](https://rustup.rs)) · Node 22+ · Docker (for Postgres)
-- A free [Plaid sandbox](https://dashboard.plaid.com) account (client_id + secret) for the connect flow
+
+`./setup.sh` installs these for you; listed here if you'd rather do it yourself:
+
+- Rust (via [rustup](https://rustup.rs)) · Node 20+ · Docker (for Postgres) · openssl
+- A free [Plaid sandbox](https://dashboard.plaid.com) account (client_id + secret)
+  for the connect flow — add `PLAID_CLIENT_ID` / `PLAID_SECRET` to `.env`
 - *(optional)* SMTP creds (e.g. [Mailtrap](https://mailtrap.io)) to actually send alert emails
 
-### Backend
+### Manual setup
+
+Equivalent to what `./run.sh` does, broken out.
+
+**Backend**
 ```bash
 docker compose up -d                 # Postgres (taxloss/taxloss, db taxloss)
-cp .env.example .env                 # then fill in PLAID_* (and SMTP_* if you want email)
+cp .env.example .env                 # add PLAID_*; generate a key:
+                                     #   openssl rand -base64 32  → TOKEN_ENCRYPTION_KEY
 cargo run -p api                     # migrations auto-run on startup; serves :8080
 ```
 
-### Frontend
+**Frontend**
 ```bash
 cd frontend
 npm install
 npm run dev                          # Vite :5173, proxies /api → :8080
 ```
-Open http://localhost:5173. With no brokerage connected you'll land on onboarding;
-the **Connect sandbox brokerage** button runs the full Plaid sandbox sync.
+
+Open http://localhost:5173, **sign up**, then **Connect a brokerage** (Plaid Link).
+In sandbox, pick any institution and log in with **`user_good` / `pass_good`**.
 
 ### Checks (mirror CI)
 ```bash
@@ -157,6 +191,7 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace               # needs DATABASE_URL set (Postgres up)
 cd frontend && npm run build         # tsc --noEmit + vite build
+bash -n setup.sh && bash -n run.sh   # shell scripts (also linted in CI on macOS + Ubuntu)
 ```
 
 ---
@@ -172,11 +207,14 @@ cd frontend && npm run build         # tsc --noEmit + vite build
 | M5 | Alerts + cron scheduler + email | ✅ |
 | M6 | UI/UX design gate (mocks + endpoint map) | ✅ |
 | M7 | React frontend | ✅ |
-| M8 | Productization: auth, multi-user, secrets, deploy | ⏳ |
+| M8 | Productization: auth, multi-user, secrets, deploy | ✅ |
 
-**Known follow-ups:** real Plaid Link UI (replacing the sandbox-connect shortcut),
-a portfolio value-history endpoint to back the dashboard's performance chart, and
-realized-gains tracking (v1 reconstructs open lots only).
+**Done since:** real Plaid Link onboarding, DB-backed auth + per-user tenant
+isolation, Plaid webhook signature verification, and container + Cloud Run /
+Cloud SQL deploy scripts.
+
+**Known follow-ups:** a portfolio value-history endpoint to back the dashboard's
+performance chart, and realized-gains tracking (v1 reconstructs open lots only).
 
 ---
 

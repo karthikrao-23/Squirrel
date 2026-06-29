@@ -101,6 +101,40 @@ jobs:
       - name: Audit dependencies
         run: cargo audit --ignore RUSTSEC-2023-0071
 
+  scripts:
+    # Guard the onboarding scripts (setup.sh / run.sh) on real macOS + Ubuntu, so
+    # the platform-detection / reporting paths can't silently break. `--check`
+    # installs nothing and exits 0 regardless of what's present on the runner.
+    name: scripts (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Syntax check (bash -n)
+        run: |
+          bash -n setup.sh
+          bash -n run.sh
+
+      - name: ShellCheck (errors only, where available)
+        run: |
+          if command -v shellcheck >/dev/null 2>&1; then
+            shellcheck --severity=error -x setup.sh run.sh
+          else
+            echo "shellcheck not on this runner — skipping"
+          fi
+
+      - name: Help renders
+        run: |
+          ./setup.sh --help
+          ./run.sh --help
+
+      - name: Prerequisite detection (setup.sh --check)
+        run: ./setup.sh --check
+
   coverage:
     name: coverage (llvm-cov)
     runs-on: ubuntu-latest
