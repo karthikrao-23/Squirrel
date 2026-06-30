@@ -198,6 +198,78 @@ async fn tax_lots_replace_is_atomic_and_overwrites(pool: PgPool) -> sqlx::Result
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn list_open_with_account_returns_account_info_scoped_by_user(
+    pool: PgPool,
+) -> sqlx::Result<()> {
+    // Securities are shared across users, so seed one and reuse it.
+    let sec = queries::securities::upsert(
+        &pool,
+        "sec_1",
+        Some("AAPL"),
+        Some("Apple Inc"),
+        None,
+        Some("equity"),
+        Some(dec!(190)),
+        None,
+        Some("USD"),
+    )
+    .await?;
+
+    // Seed two distinct users, each with their own account + open lot.
+    let alice = queries::users::create(&pool, "alice@example.com", "hash").await?;
+    let bob = queries::users::create(&pool, "bob@example.com", "hash").await?;
+
+    let seed_lot = |user_id, acct_name: &'static str, subtype: Option<&'static str>| {
+        let pool = pool.clone();
+        async move {
+            let item =
+                queries::plaid_items::upsert(&pool, user_id, "item", b"enc", Some("ins_1")).await?;
+            let acct = queries::accounts::upsert(
+                &pool,
+                user_id,
+                item.id,
+                "acct",
+                acct_name,
+                None,
+                Some("investment"),
+                subtype,
+            )
+            .await?;
+            let lots = vec![db::queries::tax_lots::NewLot {
+                account_id: acct,
+                security_id: sec,
+                open_date: date("2020-01-01"),
+                original_quantity: dec!(10),
+                remaining_quantity: dec!(10),
+                cost_basis_per_share: dec!(5),
+                source_transaction_id: None,
+            }];
+            queries::tax_lots::replace_for_user(&pool, user_id, &lots).await?;
+            Ok::<_, sqlx::Error>(())
+        }
+    };
+
+    seed_lot(alice.id, "Alice Brokerage", Some("brokerage")).await?;
+    seed_lot(bob.id, "Bob IRA", Some("ira")).await?;
+
+    let alice_lots = queries::tax_lots::list_open_with_account(&pool, alice.id).await?;
+    assert_eq!(alice_lots.len(), 1, "alice sees only her own lot");
+    let lot = &alice_lots[0];
+    assert_eq!(lot.account_name, "Alice Brokerage");
+    assert_eq!(lot.account_subtype.as_deref(), Some("brokerage"));
+    assert_eq!(lot.ticker.as_deref(), Some("AAPL"));
+    assert_eq!(lot.remaining_quantity, dec!(10));
+    assert_eq!(lot.close_price, Some(dec!(190)));
+
+    // Scoping: nothing of Bob's leaks into Alice's result, and vice versa.
+    assert!(alice_lots.iter().all(|l| l.account_name != "Bob IRA"));
+    let bob_lots = queries::tax_lots::list_open_with_account(&pool, bob.id).await?;
+    assert_eq!(bob_lots.len(), 1);
+    assert_eq!(bob_lots[0].account_name, "Bob IRA");
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn alerts_dedup_until_read(pool: PgPool) -> sqlx::Result<()> {
     let user = queries::users::ensure_default(&pool).await?;
     let payload = serde_json::json!({"saving": 100});

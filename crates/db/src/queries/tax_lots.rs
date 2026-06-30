@@ -110,6 +110,50 @@ pub async fn list_open_with_price(
     .await
 }
 
+/// An open lot enriched with its account (name/subtype) and current price,
+/// for the per-account view. Mirrors [`OpenLotPriced`] but adds account info.
+#[derive(Debug, Serialize, FromRow)]
+pub struct LotByAccount {
+    pub id: Uuid,
+    pub account_id: Uuid,
+    pub account_name: String,
+    pub account_subtype: Option<String>,
+    pub security_id: Uuid,
+    pub ticker: Option<String>,
+    pub open_date: NaiveDate,
+    pub remaining_quantity: Decimal,
+    pub cost_basis_per_share: Decimal,
+    pub close_price: Option<Decimal>,
+}
+
+/// All still-open lots with shares remaining, grouped per account.
+///
+/// Like [`list_open_with_price`] but joined to `accounts` for the name/subtype,
+/// and ordered so callers can group by account in a single pass.
+pub async fn list_open_with_account(
+    pool: &PgPool,
+    user_id: Uuid,
+) -> sqlx::Result<Vec<LotByAccount>> {
+    sqlx::query_as::<_, LotByAccount>(
+        r#"
+        SELECT l.id, l.account_id, a.name AS account_name, a.subtype AS account_subtype,
+               l.security_id, s.ticker, l.open_date,
+               l.remaining_quantity, l.cost_basis_per_share,
+               COALESCE(h.institution_price, s.close_price) AS close_price
+        FROM tax_lots l
+        JOIN accounts a ON a.id = l.account_id
+        JOIN securities s ON s.id = l.security_id
+        LEFT JOIN holdings h
+               ON h.account_id = l.account_id AND h.security_id = l.security_id
+        WHERE l.user_id = $1 AND l.status = 'open' AND l.remaining_quantity > 0
+        ORDER BY a.name, s.ticker, l.open_date
+        "#,
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await
+}
+
 pub async fn list_with_security(pool: &PgPool, user_id: Uuid) -> sqlx::Result<Vec<LotView>> {
     sqlx::query_as::<_, LotView>(
         r#"

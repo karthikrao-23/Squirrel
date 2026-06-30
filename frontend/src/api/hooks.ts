@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { get, patch, post } from "./client";
 import type {
   Account,
+  AccountLot,
   Alert,
   ConnectResponse,
   HarvestCandidate,
@@ -20,6 +21,7 @@ export const keys = {
   me: ["me"] as const,
   profile: ["profile"] as const,
   accounts: ["accounts"] as const,
+  accountLots: ["accounts", "lots"] as const,
   holdings: ["holdings"] as const,
   summary: ["tax", "summary"] as const,
   harvest: ["tax", "harvest"] as const,
@@ -106,6 +108,13 @@ export const useAccounts = () =>
   useQuery({
     queryKey: keys.accounts,
     queryFn: () => get<{ accounts: Account[] }>("/api/accounts").then((r) => r.accounts),
+  });
+
+export const useAccountLots = () =>
+  useQuery({
+    queryKey: keys.accountLots,
+    queryFn: () =>
+      get<{ lots: AccountLot[] }>("/api/accounts/lots").then((r) => r.lots),
   });
 
 export const useHoldings = () =>
