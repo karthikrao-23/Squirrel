@@ -99,6 +99,13 @@ export interface TaxSummary {
   lots_unpriced: number;
 }
 
+// GET /api/portfolio/history → { history: PortfolioSnapshot[] }
+export interface PortfolioSnapshot {
+  as_of: IsoDate;
+  market_value: Dec;
+  cost_basis: Dec;
+}
+
 // GET /api/tax/harvest → { candidates: HarvestCandidate[] }
 export interface HarvestCandidate {
   lot_id: Uuid;
