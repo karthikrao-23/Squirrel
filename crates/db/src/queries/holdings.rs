@@ -22,6 +22,30 @@ pub struct HoldingView {
     pub currency: Option<String>,
 }
 
+/// A bare position (one per account+security) — the current share count plus the
+/// institution-provided cost basis and price. Used to reconcile reconstructed tax
+/// lots to the actual holdings (synthesizing an opening-balance lot for shares
+/// held before the available transaction history).
+#[derive(Debug, FromRow)]
+pub struct Position {
+    pub account_id: Uuid,
+    pub security_id: Uuid,
+    pub quantity: Decimal,
+    pub cost_basis: Option<Decimal>,
+    pub institution_price: Option<Decimal>,
+}
+
+/// Every holding's current position for a user (account, security, qty, basis, price).
+pub async fn positions_for_user(pool: &PgPool, user_id: Uuid) -> sqlx::Result<Vec<Position>> {
+    sqlx::query_as::<_, Position>(
+        "SELECT account_id, security_id, quantity, cost_basis, institution_price
+         FROM holdings WHERE user_id = $1",
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await
+}
+
 /// All holdings for the user, most valuable first.
 pub async fn list_with_security(pool: &PgPool, user_id: Uuid) -> sqlx::Result<Vec<HoldingView>> {
     sqlx::query_as::<_, HoldingView>(
