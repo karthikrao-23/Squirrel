@@ -1,7 +1,19 @@
 import { useMemo } from "react";
-import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
+import {
+  Area,
+  AreaChart,
+  CartesianGrid,
+  Cell,
+  Line,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { useQueryClient } from "@tanstack/react-query";
-import { keys, useHoldings, useSummary } from "../api/hooks";
+import { keys, useHoldings, usePortfolioHistory, useSummary } from "../api/hooks";
 import type { Holding } from "../api/types";
 import { ConnectInstitutionButton } from "../components/ConnectInstitution";
 import { Card, CardHead, Disclaimer, ErrorState, Money, Spinner, Stat } from "../components/ui";
@@ -20,6 +32,17 @@ export function Dashboard() {
   const qc = useQueryClient();
   const summary = useSummary();
   const holdings = useHoldings();
+  const history = usePortfolioHistory();
+
+  const series = useMemo(
+    () =>
+      (history.data ?? []).map((s) => ({
+        as_of: s.as_of,
+        market_value: num(s.market_value),
+        cost_basis: num(s.cost_basis),
+      })),
+    [history.data],
+  );
 
   const allocation = useMemo(() => {
     const rows = (holdings.data ?? [])
@@ -46,6 +69,7 @@ export function Dashboard() {
               qc.invalidateQueries({ queryKey: keys.summary });
               qc.invalidateQueries({ queryKey: keys.holdings });
               qc.invalidateQueries({ queryKey: keys.accounts });
+              qc.invalidateQueries({ queryKey: keys.portfolioHistory });
             }}
           >
             ↻ Refresh
@@ -95,30 +119,79 @@ export function Dashboard() {
       ) : null}
 
       <div className="grid dash mt16">
-        {/* Value-over-time: no backend endpoint yet (point-in-time only). */}
+        {/* Value-over-time — GET /api/portfolio/history (daily snapshots). */}
         <Card>
           <CardHead title="Portfolio value" />
           <div className="card-body">
-            <div
-              style={{
-                height: 200,
-                display: "grid",
-                placeItems: "center",
-                border: "1px dashed var(--border-strong)",
-                borderRadius: "var(--radius-sm)",
-                color: "var(--text-faint)",
-                textAlign: "center",
-                padding: 16,
-              }}
-            >
-              <div>
-                <div style={{ fontWeight: 600 }}>Performance history coming soon</div>
-                <div className="faint mt8">
-                  Needs a value-snapshot endpoint — <code>tax/summary</code> is point-in-time. Tracked for a
-                  later milestone.
+            {history.isLoading ? (
+              <Spinner />
+            ) : history.isError ? (
+              <ErrorState error={history.error} onRetry={() => history.refetch()} />
+            ) : series.length < 2 ? (
+              <div
+                style={{
+                  height: 200,
+                  display: "grid",
+                  placeItems: "center",
+                  border: "1px dashed var(--border-strong)",
+                  borderRadius: "var(--radius-sm)",
+                  color: "var(--text-faint)",
+                  textAlign: "center",
+                  padding: 16,
+                }}
+              >
+                <div className="faint">
+                  Building history — a snapshot is recorded once per day.
                 </div>
               </div>
-            </div>
+            ) : (
+              <div style={{ height: 200 }}>
+                <ResponsiveContainer>
+                  <AreaChart data={series} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
+                    <defs>
+                      <linearGradient id="mvFill" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="#1f6feb" stopOpacity={0.35} />
+                        <stop offset="100%" stopColor="#1f6feb" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                    <XAxis
+                      dataKey="as_of"
+                      tickFormatter={(d: string) => fmtDate(d)}
+                      tick={{ fontSize: 11, fill: "var(--text-faint)" }}
+                      minTickGap={24}
+                    />
+                    <YAxis
+                      width={64}
+                      tickFormatter={(v: number) => money(v)}
+                      tick={{ fontSize: 11, fill: "var(--text-faint)" }}
+                    />
+                    <Tooltip
+                      labelFormatter={(d) => fmtDate(d as string)}
+                      formatter={(v: number, name) => [
+                        money(v, 2),
+                        name === "market_value" ? "Market value" : "Cost basis",
+                      ]}
+                    />
+                    <Area
+                      type="monotone"
+                      dataKey="market_value"
+                      stroke="#1f6feb"
+                      strokeWidth={2}
+                      fill="url(#mvFill)"
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="cost_basis"
+                      stroke="#8a93a1"
+                      strokeWidth={1.5}
+                      strokeDasharray="4 3"
+                      dot={false}
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            )}
           </div>
         </Card>
 

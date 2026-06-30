@@ -5,6 +5,7 @@
 //! - `GET  /api/transactions` → recent transactions (`?limit=`, default 200)
 //! - `GET  /api/lots`         → reconstructed open tax lots
 //! - `POST /api/lots/rebuild` → re-run FIFO reconstruction now
+//! - `GET  /api/portfolio/history` → daily value/cost-basis snapshots
 
 use axum::extract::{Query, State};
 use axum::routing::{get, post};
@@ -46,6 +47,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/transactions", get(list_transactions))
         .route("/api/lots", get(list_lots))
         .route("/api/lots/rebuild", post(rebuild_lots))
+        .route("/api/portfolio/history", get(portfolio_history))
 }
 
 async fn list_accounts(
@@ -124,4 +126,12 @@ async fn rebuild_lots(
 ) -> Result<Json<Value>, AppError> {
     let count = crate::lots::rebuild_lots(&state.db, user.0.id).await?;
     Ok(Json(json!({ "rebuilt": count })))
+}
+
+async fn portfolio_history(
+    State(state): State<AppState>,
+    user: AuthUser,
+) -> Result<Json<Value>, AppError> {
+    let history = db::queries::snapshots::history(&state.db, user.0.id).await?;
+    Ok(Json(json!({ "history": history })))
 }

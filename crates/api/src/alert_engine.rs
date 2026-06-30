@@ -9,6 +9,7 @@
 use chrono::{Duration, Utc};
 use db::models::User;
 use domain::alerts::{self, AlertConfig, AlertInput};
+use rust_decimal::Decimal;
 use serde::Serialize;
 use std::collections::HashSet;
 use uuid::Uuid;
@@ -109,6 +110,26 @@ pub async fn send_pending_emails_for_user(state: &AppState, user: &User) -> anyh
     Ok(pending.len())
 }
 
+/// Record today's portfolio totals as a daily snapshot (idempotent per day).
+/// Market value sums only lots with a known current price; cost basis sums all
+/// open lots. Backs the dashboard's value-over-time chart.
+pub async fn record_snapshot_for_user(state: &AppState, user: &User) -> anyhow::Result<()> {
+    let today = Utc::now().date_naive();
+    let lots = db::queries::tax_lots::list_open_with_price(&state.db, user.id).await?;
+
+    let mut market_value = Decimal::ZERO;
+    let mut cost_basis = Decimal::ZERO;
+    for lot in &lots {
+        cost_basis += lot.remaining_quantity * lot.cost_basis_per_share;
+        if let Some(price) = lot.close_price {
+            market_value += lot.remaining_quantity * price;
+        }
+    }
+
+    db::queries::snapshots::upsert(&state.db, user.id, today, market_value, cost_basis).await?;
+    Ok(())
+}
+
 /// Full cycle for one user: refresh that user's prices from Plaid (best-effort),
 /// evaluate alert rules, then email any pending alerts to them.
 pub async fn run_cycle_for_user(state: &AppState, user: &User) -> anyhow::Result<CycleSummary> {
@@ -129,7 +150,13 @@ pub async fn run_cycle_for_user(state: &AppState, user: &User) -> anyhow::Result
         }
     }
 
-    // 2. Evaluate + 3. email.
+    // 2. Record today's value snapshot (non-fatal: a failure here must not block
+    //    alert evaluation/email for this user).
+    if let Err(e) = record_snapshot_for_user(state, user).await {
+        tracing::error!(user = %user.id, error = %e, "snapshot failed");
+    }
+
+    // 3. Evaluate + 4. email.
     summary.alerts_created = evaluate_and_store_for_user(state, user).await?;
     summary.emails_sent = send_pending_emails_for_user(state, user).await?;
 

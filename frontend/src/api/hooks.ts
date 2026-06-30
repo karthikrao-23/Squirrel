@@ -11,6 +11,7 @@ import type {
   HarvestCandidate,
   Holding,
   LinkTokenResp,
+  PortfolioSnapshot,
   SimulateReq,
   SimulateResp,
   TaxSummary,
@@ -23,6 +24,7 @@ export const keys = {
   accounts: ["accounts"] as const,
   accountLots: ["accounts", "lots"] as const,
   holdings: ["holdings"] as const,
+  portfolioHistory: ["portfolio", "history"] as const,
   summary: ["tax", "summary"] as const,
   harvest: ["tax", "harvest"] as const,
   alerts: (unreadOnly: boolean) => ["alerts", { unreadOnly }] as const,
@@ -121,6 +123,13 @@ export const useHoldings = () =>
   useQuery({
     queryKey: keys.holdings,
     queryFn: () => get<{ holdings: Holding[] }>("/api/holdings").then((r) => r.holdings),
+  });
+
+export const usePortfolioHistory = () =>
+  useQuery({
+    queryKey: keys.portfolioHistory,
+    queryFn: () =>
+      get<{ history: PortfolioSnapshot[] }>("/api/portfolio/history").then((r) => r.history),
   });
 
 // ---- Tax ----
