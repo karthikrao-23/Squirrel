@@ -27,6 +27,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/plaid/link-token", post(link_token))
         .route("/api/plaid/exchange", post(exchange))
+        .route("/api/plaid/resync", post(resync))
         .route("/api/plaid/sandbox/connect", post(sandbox_connect))
         .route("/api/plaid/webhook", post(webhook))
 }
@@ -75,6 +76,30 @@ async fn exchange(
 ) -> Result<Json<ConnectResponse>, AppError> {
     let resp = connect_with_public_token(&state, user.0.id, &body.public_token).await?;
     Ok(Json(resp))
+}
+
+/// `POST /api/plaid/resync` — re-pull holdings + transactions for all of the
+/// user's connected items. Lets data refresh (and code/data fixes) reach an
+/// existing connection without reconnecting; `sync_item` rebuilds tax lots too.
+async fn resync(State(state): State<AppState>, user: AuthUser) -> Result<Json<Value>, AppError> {
+    require_plaid(&state)?;
+    let key = require_key(&state)?;
+    let items = db::queries::plaid_items::list_for_user(&state.db, user.0.id).await?;
+    let mut accounts = 0;
+    let mut holdings = 0;
+    let mut transactions = 0;
+    for item in &items {
+        let s = sync::sync_item(&state.db, &state.plaid, &key, item).await?;
+        accounts += s.accounts;
+        holdings += s.holdings;
+        transactions += s.transactions_inserted;
+    }
+    Ok(Json(json!({
+        "items": items.len(),
+        "accounts": accounts,
+        "holdings": holdings,
+        "transactions_inserted": transactions,
+    })))
 }
 
 /// `POST /api/plaid/sandbox/connect` — end-to-end test path without a frontend.

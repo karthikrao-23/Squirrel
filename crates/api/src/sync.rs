@@ -9,7 +9,7 @@
 
 use std::collections::HashMap;
 
-use chrono::{Duration, Utc};
+use chrono::{Duration, NaiveDate, Utc};
 use db::models::PlaidItem;
 use plaid::models::PlaidSecurity;
 use plaid::transactions::MAX_PAGE_SIZE;
@@ -36,6 +36,64 @@ fn dec(v: f64) -> Decimal {
 
 fn odec(v: Option<f64>) -> Option<Decimal> {
     v.and_then(Decimal::from_f64_retain)
+}
+
+/// Sum two optional decimals; `None` is absent (not zero), so an all-`None`
+/// aggregate stays `None`.
+fn add_opt(a: Option<Decimal>, b: Option<Decimal>) -> Option<Decimal> {
+    match (a, b) {
+        (Some(x), Some(y)) => Some(x + y),
+        (a, b) => a.or(b),
+    }
+}
+
+/// One resolved Plaid holding row (account/security already mapped to our UUIDs),
+/// ready to aggregate.
+struct HoldingRow {
+    account_id: Uuid,
+    security_id: Uuid,
+    quantity: Decimal,
+    institution_value: Option<Decimal>,
+    cost_basis: Option<Decimal>,
+    institution_price: Option<Decimal>,
+    institution_price_as_of: Option<NaiveDate>,
+    currency: Option<String>,
+}
+
+/// Accumulator for the (possibly several) Plaid holding rows of one position.
+#[derive(Default)]
+struct PositionAgg {
+    quantity: Decimal,
+    institution_value: Option<Decimal>,
+    cost_basis: Option<Decimal>,
+    institution_price: Option<Decimal>,
+    institution_price_as_of: Option<NaiveDate>,
+    currency: Option<String>,
+}
+
+/// Collapse the (possibly several) Plaid holding rows for the same
+/// (account, security) into one position: sum quantity / value / cost basis; the
+/// per-share price + currency are the same across the split rows, so keep the
+/// first. Plaid splits stock-plan positions (ESPP / RSU / purchased) into
+/// separate rows — without this they'd clobber each other on upsert and shares
+/// would be silently dropped. Pure; unit-tested.
+fn aggregate_holdings(rows: Vec<HoldingRow>) -> Vec<(Uuid, Uuid, PositionAgg)> {
+    let mut by_pos: HashMap<(Uuid, Uuid), PositionAgg> = HashMap::new();
+    for r in rows {
+        let agg = by_pos.entry((r.account_id, r.security_id)).or_default();
+        agg.quantity += r.quantity;
+        agg.institution_value = add_opt(agg.institution_value, r.institution_value);
+        agg.cost_basis = add_opt(agg.cost_basis, r.cost_basis);
+        agg.institution_price = agg.institution_price.or(r.institution_price);
+        agg.institution_price_as_of = agg.institution_price_as_of.or(r.institution_price_as_of);
+        if agg.currency.is_none() {
+            agg.currency = r.currency;
+        }
+    }
+    by_pos
+        .into_iter()
+        .map(|((a, s), agg)| (a, s, agg))
+        .collect()
 }
 
 /// Upsert one security and remember its UUID keyed by Plaid's security id.
@@ -101,6 +159,14 @@ pub async fn sync_item(
     }
     summary.accounts = acct_map.len();
 
+    // Plaid can return MULTIPLE holdings for the same (account, security) — most
+    // commonly stock-plan accounts that split a position into ESPP / RSU /
+    // purchased lots (by cost basis). Our `holdings` row is one position per
+    // (account, security), so aggregate (sum quantity / value / cost basis)
+    // before upserting; otherwise later rows clobber earlier ones and shares are
+    // silently dropped. The per-share price + currency are the same across the
+    // split rows, so we keep the first non-null.
+    let mut rows: Vec<HoldingRow> = Vec::new();
     for h in &holdings.holdings {
         let (Some(&account_id), Some(&security_id)) =
             (acct_map.get(&h.account_id), sec_map.get(&h.security_id))
@@ -108,17 +174,29 @@ pub async fn sync_item(
             tracing::warn!(account = %h.account_id, security = %h.security_id, "holding references unknown account/security; skipping");
             continue;
         };
+        rows.push(HoldingRow {
+            account_id,
+            security_id,
+            quantity: dec(h.quantity),
+            institution_value: odec(h.institution_value),
+            cost_basis: odec(h.cost_basis),
+            institution_price: odec(h.institution_price),
+            institution_price_as_of: h.institution_price_as_of,
+            currency: h.iso_currency_code.clone(),
+        });
+    }
+    for (account_id, security_id, agg) in aggregate_holdings(rows) {
         db::queries::holdings::upsert(
             pool,
             item.user_id,
             account_id,
             security_id,
-            dec(h.quantity),
-            odec(h.institution_price),
-            h.institution_price_as_of,
-            odec(h.institution_value),
-            odec(h.cost_basis),
-            h.iso_currency_code.as_deref(),
+            agg.quantity,
+            agg.institution_price,
+            agg.institution_price_as_of,
+            agg.institution_value,
+            agg.cost_basis,
+            agg.currency.as_deref(),
         )
         .await?;
         summary.holdings += 1;
@@ -188,4 +266,78 @@ pub async fn sync_item(
 
     tracing::info!(?summary, item = %item.plaid_item_id, "sync complete");
     Ok(summary)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const A: Uuid = Uuid::from_u128(0xA);
+    const S: Uuid = Uuid::from_u128(0x5);
+
+    fn row(qty: i64, value: Option<i64>, basis: Option<i64>, price: Option<i64>) -> HoldingRow {
+        HoldingRow {
+            account_id: A,
+            security_id: S,
+            quantity: Decimal::from(qty),
+            institution_value: value.map(Decimal::from),
+            cost_basis: basis.map(Decimal::from),
+            institution_price: price.map(Decimal::from),
+            institution_price_as_of: None,
+            currency: Some("USD".into()),
+        }
+    }
+
+    #[test]
+    fn add_opt_sums_present_and_keeps_single() {
+        assert_eq!(
+            add_opt(Some(Decimal::from(2)), Some(Decimal::from(3))),
+            Some(Decimal::from(5))
+        );
+        assert_eq!(
+            add_opt(Some(Decimal::from(2)), None),
+            Some(Decimal::from(2))
+        );
+        assert_eq!(
+            add_opt(None, Some(Decimal::from(3))),
+            Some(Decimal::from(3))
+        );
+        assert_eq!(add_opt(None, None), None);
+    }
+
+    #[test]
+    fn aggregates_split_rows_for_same_position() {
+        // The ESPP case: Plaid returns two CRM rows for one stock-plan account.
+        // 562 + 1425 must sum to 1987, not clobber to 1425.
+        let out = aggregate_holdings(vec![
+            row(562, Some(88_964), Some(70_000), Some(158)),
+            row(1425, Some(225_577), Some(180_000), Some(158)),
+        ]);
+        assert_eq!(out.len(), 1, "one aggregated position");
+        let (a, s, agg) = &out[0];
+        assert_eq!((*a, *s), (A, S));
+        assert_eq!(agg.quantity, Decimal::from(1987));
+        assert_eq!(agg.institution_value, Some(Decimal::from(314_541)));
+        assert_eq!(agg.cost_basis, Some(Decimal::from(250_000)));
+        assert_eq!(agg.institution_price, Some(Decimal::from(158)));
+    }
+
+    #[test]
+    fn distinct_positions_are_kept_separate() {
+        let s2 = Uuid::from_u128(0x6);
+        let out = aggregate_holdings(vec![
+            row(10, Some(100), None, None),
+            HoldingRow {
+                security_id: s2,
+                ..row(20, Some(200), None, None)
+            },
+        ]);
+        assert_eq!(out.len(), 2);
+        let q: std::collections::HashMap<_, _> = out
+            .into_iter()
+            .map(|(_, s, agg)| (s, agg.quantity))
+            .collect();
+        assert_eq!(q[&S], Decimal::from(10));
+        assert_eq!(q[&s2], Decimal::from(20));
+    }
 }

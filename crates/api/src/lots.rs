@@ -5,15 +5,17 @@
 //! each group, then atomically replace the stored lots. Called after every sync
 //! (data changed → derived lots are stale) and exposed via `/api/lots/rebuild`.
 //!
-//! Because Plaid's investment-transaction feed only reaches back ~24 months, a
-//! position bought earlier has no transactions to reconstruct from — its shares
-//! would be missing from valuation and tax math. After FIFO we therefore
-//! reconcile to the actual holdings, synthesizing an **opening-balance** lot for
-//! any shares a holding has beyond what the transactions account for.
+//! Because Plaid's investment-transaction feed only reaches back ~24 months, the
+//! reconstructed lots don't match the current holdings: positions opened earlier
+//! are under-counted, and positions sold (whose sells fell outside the window)
+//! are over-counted. After FIFO we therefore [`reconcile`] the lots to the actual
+//! holdings so the totals match Plaid's positions exactly — adding opening-balance
+//! lots for the shortfall and trimming the excess.
 
 use std::collections::{BTreeMap, HashMap};
 
 use chrono::{Duration, NaiveDate, Utc};
+use db::queries::holdings::Position;
 use db::queries::tax_lots::NewLot;
 use domain::lots::{reconstruct_fifo, LotInput};
 use rust_decimal::Decimal;
@@ -69,7 +71,14 @@ pub async fn rebuild_lots(pool: &PgPool, user_id: Uuid) -> anyhow::Result<u64> {
         }
     }
 
-    append_opening_lots(pool, user_id, &mut new_lots, &earliest, global_earliest).await?;
+    let positions = db::queries::holdings::positions_for_user(pool, user_id).await?;
+    reconcile(
+        &mut new_lots,
+        &positions,
+        &earliest,
+        global_earliest,
+        Utc::now().date_naive(),
+    );
 
     let count = db::queries::tax_lots::replace_for_user(pool, user_id, &new_lots).await?;
     tracing::info!(lots = count, user = %user_id, "tax lots rebuilt");
@@ -77,25 +86,65 @@ pub async fn rebuild_lots(pool: &PgPool, user_id: Uuid) -> anyhow::Result<u64> {
 }
 
 /// Quantities at or below this are treated as zero (guards against Plaid's
-/// fractional-share rounding dust producing spurious opening lots).
+/// fractional-share rounding dust producing spurious lots).
 fn qty_epsilon() -> Decimal {
     Decimal::new(1, 6) // 0.000001
 }
 
-/// Reconcile reconstructed lots to the actual holdings. For each position whose
-/// holding quantity exceeds the reconstructed lot quantity, append one
-/// opening-balance lot for the difference: priced at the current price (via the
-/// usual holdings join when valued) and carrying the residual of Plaid's
-/// position-level cost basis. These shares predate our transaction history, so
-/// they're dated before it and treated as long-term.
-async fn append_opening_lots(
-    pool: &PgPool,
-    user_id: Uuid,
+/// Reconcile reconstructed lots to the current `positions` so the open-lot totals
+/// match Plaid's holdings exactly, in **both** directions. Pure (no I/O), and
+/// exhaustively unit-tested below. Lots fully consumed by trimming (remaining ≈ 0)
+/// are removed.
+///
+/// * **Over-count** — FIFO left more shares lotted than the holding has (a position
+///   partly/fully sold whose sells fell outside the ~24-month window). Trim the
+///   excess oldest-first (FIFO sells oldest); a security no longer held has its
+///   lots dropped entirely.
+/// * **Under-count** — the holding has more shares than were lotted (bought before
+///   the window). Append one opening-balance lot for the difference, carrying the
+///   residual of Plaid's position cost basis, dated before our earliest record and
+///   `today - 367d` so it sorts oldest (FIFO) and classifies as long-term.
+fn reconcile(
     new_lots: &mut Vec<NewLot>,
+    positions: &[Position],
     earliest: &HashMap<(Uuid, Uuid), NaiveDate>,
     global_earliest: Option<NaiveDate>,
-) -> anyhow::Result<()> {
-    // Quantity + cost basis already accounted for by reconstructed lots, per position.
+    today: NaiveDate,
+) {
+    let target_qty: HashMap<(Uuid, Uuid), Decimal> = positions
+        .iter()
+        .map(|p| ((p.account_id, p.security_id), p.quantity))
+        .collect();
+
+    // --- Over-count: trim each position's lots down to its holding quantity
+    // (zero when not held), oldest-first. ---
+    let mut idx_by_pos: HashMap<(Uuid, Uuid), Vec<usize>> = HashMap::new();
+    for (i, l) in new_lots.iter().enumerate() {
+        idx_by_pos
+            .entry((l.account_id, l.security_id))
+            .or_default()
+            .push(i);
+    }
+    for (key, mut idxs) in idx_by_pos {
+        let held = target_qty.get(&key).copied().unwrap_or(Decimal::ZERO);
+        let current: Decimal = idxs.iter().map(|&i| new_lots[i].remaining_quantity).sum();
+        let mut excess = current - held;
+        if excess <= qty_epsilon() {
+            continue;
+        }
+        idxs.sort_by_key(|&i| new_lots[i].open_date); // oldest first
+        for &i in &idxs {
+            if excess <= qty_epsilon() {
+                break;
+            }
+            let take = excess.min(new_lots[i].remaining_quantity);
+            new_lots[i].remaining_quantity -= take;
+            excess -= take;
+        }
+    }
+
+    // --- Under-count: append opening-balance lots. Reconstructed totals are
+    // recomputed from the (now-trimmed) lots. ---
     let mut recon: HashMap<(Uuid, Uuid), (Decimal, Decimal)> = HashMap::new();
     for lot in new_lots.iter() {
         let e = recon
@@ -105,12 +154,9 @@ async fn append_opening_lots(
         e.1 += lot.remaining_quantity * lot.cost_basis_per_share;
     }
 
-    // Opening lots are dated before our earliest record AND > 1 year ago, so they
-    // sort oldest for FIFO and classify as long-term (prior holdings).
-    let long_term_cutoff = Utc::now().date_naive() - Duration::days(367);
+    let long_term_cutoff = today - Duration::days(367);
     let day_before = |d: NaiveDate| d.pred_opt().unwrap_or(d);
 
-    let positions = db::queries::holdings::positions_for_user(pool, user_id).await?;
     for p in positions {
         let key = (p.account_id, p.security_id);
         let (recon_qty, recon_basis) = recon
@@ -150,5 +196,183 @@ async fn append_opening_lots(
             source_transaction_id: None,
         });
     }
-    Ok(())
+
+    // Drop lots fully consumed by the over-count trim.
+    new_lots.retain(|l| l.remaining_quantity > qty_epsilon());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rust_decimal::prelude::ToPrimitive;
+    use uuid::Uuid;
+
+    const A: Uuid = Uuid::from_u128(0xA);
+    const S: Uuid = Uuid::from_u128(0x5); // one security used across most tests
+
+    fn d(n: i64) -> Decimal {
+        Decimal::from(n)
+    }
+    fn date(y: i32, m: u32, day: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(y, m, day).unwrap()
+    }
+    fn today() -> NaiveDate {
+        date(2026, 6, 30)
+    }
+
+    /// A reconstructed lot: (open_date, remaining_qty, cost_basis_per_share).
+    fn lot(open: NaiveDate, qty: Decimal, basis: Decimal) -> NewLot {
+        NewLot {
+            account_id: A,
+            security_id: S,
+            open_date: open,
+            original_quantity: qty,
+            remaining_quantity: qty,
+            cost_basis_per_share: basis,
+            source_transaction_id: Some(Uuid::from_u128(0x7)),
+        }
+    }
+    fn pos(qty: Decimal, basis: Option<Decimal>, price: Option<Decimal>) -> Position {
+        Position {
+            account_id: A,
+            security_id: S,
+            quantity: qty,
+            cost_basis: basis,
+            institution_price: price,
+        }
+    }
+    fn run(lots: &mut Vec<NewLot>, positions: &[Position]) {
+        let earliest: HashMap<(Uuid, Uuid), NaiveDate> =
+            [((A, S), date(2024, 7, 1))].into_iter().collect();
+        reconcile(lots, positions, &earliest, Some(date(2024, 7, 1)), today());
+    }
+    fn total_qty(lots: &[NewLot]) -> Decimal {
+        lots.iter().map(|l| l.remaining_quantity).sum()
+    }
+
+    #[test]
+    fn exact_match_is_unchanged() {
+        let mut lots = vec![lot(date(2025, 1, 1), d(100), d(10))];
+        run(&mut lots, &[pos(d(100), Some(d(1000)), None)]);
+        assert_eq!(lots.len(), 1);
+        assert_eq!(total_qty(&lots), d(100));
+    }
+
+    #[test]
+    fn under_count_appends_long_term_opening_lot() {
+        // Holding has 100 shares; only 30 are lotted → add a 70-share opening lot.
+        let mut lots = vec![lot(date(2025, 1, 1), d(30), d(12))];
+        run(&mut lots, &[pos(d(100), Some(d(900)), Some(d(20)))]);
+        assert_eq!(total_qty(&lots), d(100), "lots reconcile to the holding");
+        let opening = lots
+            .iter()
+            .find(|l| l.source_transaction_id.is_none())
+            .unwrap();
+        assert_eq!(opening.remaining_quantity, d(70));
+        // basis residual = position basis 900 − lotted (30×12=360) = 540 over 70 sh.
+        assert_eq!(opening.cost_basis_per_share, (d(540) / d(70)).round_dp(6));
+        // Dated long-term: before today−367d.
+        assert!(opening.open_date <= today() - Duration::days(367));
+        assert!(opening.open_date < date(2025, 1, 1));
+    }
+
+    #[test]
+    fn over_count_trims_oldest_first() {
+        // 70 lotted (oldest 40 + newer 30) but only 50 held → trim 20 from oldest.
+        let mut lots = vec![
+            lot(date(2024, 8, 1), d(40), d(10)), // oldest
+            lot(date(2025, 3, 1), d(30), d(15)),
+        ];
+        run(&mut lots, &[pos(d(50), Some(d(600)), None)]);
+        assert_eq!(total_qty(&lots), d(50));
+        // Oldest reduced 40 → 20; newer untouched at 30.
+        let oldest = lots
+            .iter()
+            .find(|l| l.open_date == date(2024, 8, 1))
+            .unwrap();
+        assert_eq!(oldest.remaining_quantity, d(20));
+        let newer = lots
+            .iter()
+            .find(|l| l.open_date == date(2025, 3, 1))
+            .unwrap();
+        assert_eq!(newer.remaining_quantity, d(30));
+    }
+
+    #[test]
+    fn sold_position_drops_all_lots() {
+        // Lots exist but the security is no longer held → all lots removed.
+        let mut lots = vec![
+            lot(date(2024, 8, 1), d(5), d(10)),
+            lot(date(2025, 3, 1), d(3), d(15)),
+        ];
+        run(&mut lots, &[]); // no positions
+        assert!(lots.is_empty(), "sold position leaves no open lots");
+    }
+
+    #[test]
+    fn aggregates_multiple_holdings_quantity_via_position() {
+        // Mirrors the ESPP case: the position quantity is the SUM the caller stored
+        // (e.g. CRM 562 + 1425 = 1987). Reconcile must value all of it.
+        let mut lots = vec![lot(date(2025, 1, 1), d(1425), d(100))];
+        run(&mut lots, &[pos(d(1987), Some(d(200_000)), Some(d(158)))]);
+        assert_eq!(total_qty(&lots), d(1987));
+    }
+
+    #[test]
+    fn tiny_gap_adds_no_opening_lot() {
+        // A sub-epsilon shortfall (rounding dust) must not create a spurious lot.
+        let mut lots = vec![lot(date(2025, 1, 1), d(100), d(10))];
+        let positions = [pos(d(100) + Decimal::new(1, 9), Some(d(1000)), None)];
+        run(&mut lots, &positions);
+        assert_eq!(lots.len(), 1);
+    }
+
+    #[test]
+    fn missing_basis_falls_back_to_current_price() {
+        // No Plaid cost basis → opening lot priced at current price (zero gain).
+        let mut lots: Vec<NewLot> = vec![];
+        run(&mut lots, &[pos(d(10), None, Some(d(50)))]);
+        let opening = &lots[0];
+        assert_eq!(opening.remaining_quantity, d(10));
+        assert_eq!(opening.cost_basis_per_share, d(50));
+    }
+
+    #[test]
+    fn independent_positions_reconcile_separately() {
+        let s2 = Uuid::from_u128(0x6);
+        let mut lots = vec![
+            lot(date(2025, 1, 1), d(30), d(10)), // (A,S): under (held 100)
+            NewLot {
+                security_id: s2,
+                ..lot(date(2025, 1, 1), d(80), d(10)) // (A,s2): over (held 50)
+            },
+        ];
+        let positions = [
+            pos(d(100), Some(d(1000)), None),
+            Position {
+                security_id: s2,
+                ..pos(d(50), Some(d(500)), None)
+            },
+        ];
+        let earliest = [((A, S), date(2024, 7, 1)), ((A, s2), date(2024, 7, 1))]
+            .into_iter()
+            .collect();
+        reconcile(
+            &mut lots,
+            &positions,
+            &earliest,
+            Some(date(2024, 7, 1)),
+            today(),
+        );
+        let q = |sec: Uuid| -> f64 {
+            lots.iter()
+                .filter(|l| l.security_id == sec)
+                .map(|l| l.remaining_quantity)
+                .sum::<Decimal>()
+                .to_f64()
+                .unwrap()
+        };
+        assert_eq!(q(S), 100.0);
+        assert_eq!(q(s2), 50.0);
+    }
 }
