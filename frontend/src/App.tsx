@@ -3,6 +3,7 @@ import { Navigate, Outlet, Route, Routes } from "react-router-dom";
 import { useAccounts, useMe } from "./api/hooks";
 import { TopBar } from "./components/TopBar";
 import { Spinner } from "./components/ui";
+import { Accounts } from "./screens/Accounts";
 import { Alerts } from "./screens/Alerts";
 import { Auth } from "./screens/Auth";
 import { Dashboard } from "./screens/Dashboard";
@@ -61,6 +62,7 @@ export function App() {
         <Route path="/onboarding" element={<Onboarding />} />
         <Route element={<AppLayout />}>
           <Route path="/" element={<Dashboard />} />
+          <Route path="/accounts" element={<Accounts />} />
           <Route path="/harvest" element={<Harvest />} />
           <Route path="/alerts" element={<Alerts />} />
         </Route>

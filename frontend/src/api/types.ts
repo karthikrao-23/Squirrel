@@ -63,6 +63,21 @@ export interface Holding {
   currency: string | null;
 }
 
+// GET /api/accounts/lots → { lots: AccountLot[] }
+export interface AccountLot {
+  id: Uuid;
+  account_id: Uuid;
+  account_name: string;
+  account_subtype: string | null;
+  security_id: Uuid;
+  ticker: string | null;
+  open_date: IsoDate;
+  term: Term;
+  remaining_quantity: Dec;
+  cost_basis_per_share: Dec;
+  close_price: Dec | null;
+}
+
 // Shared tax estimate breakdown
 export interface TaxEstimate {
   federal: Dec;
