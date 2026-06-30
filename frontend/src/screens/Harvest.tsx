@@ -12,16 +12,49 @@ import {
   WashSaleChip,
 } from "../components/ui";
 import { fmtDate, money, qty } from "../lib/format";
+import {
+  DEFAULT_VIEW,
+  filterSortCandidates,
+  type SortKey,
+  type TermFilter,
+} from "../lib/harvest";
 
 export function Harvest() {
   const harvest = useHarvest();
   const simulate = useSimulate();
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
+  // Search / sort / filter state for the candidate table.
+  const [search, setSearch] = useState("");
+  const [term, setTerm] = useState<TermFilter>(DEFAULT_VIEW.term);
+  const [hideWash, setHideWash] = useState(DEFAULT_VIEW.hideWash);
+  const [sortKey, setSortKey] = useState<SortKey>(DEFAULT_VIEW.sortKey);
+  const [sortDir, setSortDir] = useState(DEFAULT_VIEW.sortDir);
+
   const candidates = harvest.data ?? [];
 
-  // Default-select all candidates once they load (mirrors the mock's "checked" rows).
-  const allIds = useMemo(() => candidates.map((c) => c.lot_id), [candidates]);
+  // The filtered + sorted rows currently visible in the table.
+  const visible = useMemo(
+    () => filterSortCandidates(candidates, { search, term, hideWash, sortKey, sortDir }),
+    [candidates, search, term, hideWash, sortKey, sortDir],
+  );
+
+  // "Select all" operates over the *visible* set; selection is keyed by lot_id
+  // and survives filtering (ids stay selected even when hidden).
+  const visibleIds = useMemo(() => visible.map((c) => c.lot_id), [visible]);
+  const allVisibleSelected =
+    visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
+
+  // Click a header: toggle direction if already sorting by it, else select it.
+  function sortBy(key: SortKey) {
+    if (key === sortKey) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      setSortDir("desc");
+    }
+  }
+  const sortArrow = (key: SortKey) => (sortKey === key ? (sortDir === "asc" ? " ▲" : " ▼") : "");
 
   function toggle(id: string) {
     setSelected((prev) => {
@@ -31,7 +64,15 @@ export function Harvest() {
     });
   }
   function toggleAll() {
-    setSelected((prev) => (prev.size === allIds.length ? new Set() : new Set(allIds)));
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allVisibleSelected) {
+        for (const id of visibleIds) next.delete(id);
+      } else {
+        for (const id of visibleIds) next.add(id);
+      }
+      return next;
+    });
   }
 
   function runSimulation() {
@@ -64,28 +105,71 @@ export function Harvest() {
           ) : candidates.length === 0 ? (
             <EmptyState title="No losses to harvest" hint="None of your open lots are below cost right now." />
           ) : (
-            <table>
-              <thead>
-                <tr>
-                  <th>
-                    <input
-                      type="checkbox"
-                      checked={selected.size === allIds.length && allIds.length > 0}
-                      onChange={toggleAll}
-                      aria-label="Select all"
-                    />
-                  </th>
-                  <th>Security</th>
-                  <th>Opened</th>
-                  <th>Term</th>
-                  <th className="r">Qty</th>
-                  <th className="r">Market value</th>
-                  <th className="r">Unrealized loss</th>
-                  <th className="r">Est. tax saving</th>
-                </tr>
-              </thead>
-              <tbody>
-                {candidates.map((c) => (
+            <>
+              <div className="toolbar" style={{ flexWrap: "wrap" }}>
+                <input
+                  className="input"
+                  type="search"
+                  placeholder="Search ticker…"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  aria-label="Search by ticker"
+                  style={{ flex: "1 1 160px", width: "auto" }}
+                />
+                <div className="toggle" role="group" aria-label="Filter by term">
+                  {(
+                    [
+                      ["all", "All"],
+                      ["short_term", "Short"],
+                      ["long_term", "Long"],
+                    ] as [TermFilter, string][]
+                  ).map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      className={term === value ? "on" : ""}
+                      onClick={() => setTerm(value)}
+                      aria-pressed={term === value}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <label className="flex" style={{ gap: 6, fontSize: 13, whiteSpace: "nowrap" }}>
+                  <input
+                    type="checkbox"
+                    checked={hideWash}
+                    onChange={(e) => setHideWash(e.target.checked)}
+                  />
+                  Hide wash-sale
+                </label>
+              </div>
+
+              {visible.length === 0 ? (
+                <EmptyState title="No matches" hint="No candidates match your search or filters." />
+              ) : (
+                <table>
+                  <thead>
+                    <tr>
+                      <th>
+                        <input
+                          type="checkbox"
+                          checked={allVisibleSelected}
+                          onChange={toggleAll}
+                          aria-label="Select all visible"
+                        />
+                      </th>
+                      <th>Security</th>
+                      <SortHeader label="Opened" col="open_date" sortBy={sortBy} arrow={sortArrow} />
+                      <th>Term</th>
+                      <SortHeader className="r" label="Qty" col="quantity" sortBy={sortBy} arrow={sortArrow} />
+                      <SortHeader className="r" label="Market value" col="market_value" sortBy={sortBy} arrow={sortArrow} />
+                      <SortHeader className="r" label="Unrealized loss" col="unrealized_loss" sortBy={sortBy} arrow={sortArrow} />
+                      <SortHeader className="r" label="Est. tax saving" col="estimated_tax_saving" sortBy={sortBy} arrow={sortArrow} />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visible.map((c) => (
                   <tr key={c.lot_id}>
                     <td>
                       <input
@@ -110,8 +194,10 @@ export function Harvest() {
                     <td className="r num gain">{money(c.estimated_tax_saving)}</td>
                   </tr>
                 ))}
-              </tbody>
-            </table>
+                  </tbody>
+                </table>
+              )}
+            </>
           )}
         </Card>
 
@@ -163,6 +249,34 @@ export function Harvest() {
 
       <p className="foot">Federal + California · v1.</p>
     </div>
+  );
+}
+
+/** A clickable column header that sorts by `col`, showing a direction arrow
+ *  when active. Styled as a plain header but cursor-pointer + selectable. */
+function SortHeader({
+  label,
+  col,
+  sortBy,
+  arrow,
+  className = "",
+}: {
+  label: string;
+  col: SortKey;
+  sortBy: (k: SortKey) => void;
+  arrow: (k: SortKey) => string;
+  className?: string;
+}) {
+  return (
+    <th
+      className={className}
+      onClick={() => sortBy(col)}
+      style={{ cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}
+      aria-label={`Sort by ${label}`}
+    >
+      {label}
+      {arrow(col)}
+    </th>
   );
 }
 
