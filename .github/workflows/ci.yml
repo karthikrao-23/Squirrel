@@ -139,6 +139,21 @@ jobs:
     name: coverage (llvm-cov)
     runs-on: ubuntu-latest
 
+    # Publish the HTML report to GitHub Pages on main; the README badge reads
+    # coverage-badge.json from the same site. (Requires Settings → Pages →
+    # Source: "GitHub Actions" to be enabled once; the deploy step is tolerant
+    # until then.)
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.pages.outputs.page_url }}
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+
     services:
       postgres:
         image: postgres:16
@@ -171,14 +186,39 @@ jobs:
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
 
-      - name: Coverage (summary + lcov)
-        run: |
-          cargo llvm-cov --workspace --summary-only
-          cargo llvm-cov --workspace --lcov --output-path lcov.info
+      - name: Run coverage
+        run: cargo llvm-cov --workspace --no-report
 
-      - name: Upload coverage report
+      - name: Build reports + badge
+        run: |
+          cargo llvm-cov report --lcov --output-path lcov.info
+          cargo llvm-cov report --html --output-dir coverage-site
+          site=coverage-site/html
+          [ -f "$site/index.html" ] || site=coverage-site
+          pct=$(cargo llvm-cov report --json | jq -r '.data[0].totals.lines.percent')
+          pct=$(printf '%.1f' "$pct")
+          color=red
+          awk "BEGIN{exit !($pct>=60)}" && color=yellow
+          awk "BEGIN{exit !($pct>=80)}" && color=brightgreen
+          printf '{"schemaVersion":1,"label":"coverage","message":"%s%%","color":"%s"}\n' "$pct" "$color" > "$site/coverage-badge.json"
+          echo "SITE=$site" >> "$GITHUB_ENV"
+          echo "Total line coverage: $pct%"
+
+      - name: Upload lcov artifact
         uses: actions/upload-artifact@v4
         with:
           name: coverage-lcov
           path: lcov.info
+
+      - name: Upload Pages artifact
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ${{ env.SITE }}
+
+      - name: Deploy to GitHub Pages
+        id: pages
+        if: github.ref == 'refs/heads/main'
+        continue-on-error: true
+        uses: actions/deploy-pages@v4
 
