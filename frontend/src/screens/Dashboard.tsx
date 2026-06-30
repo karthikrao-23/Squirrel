@@ -3,6 +3,7 @@ import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 import { useQueryClient } from "@tanstack/react-query";
 import { keys, useHoldings, useSummary } from "../api/hooks";
 import type { Holding } from "../api/types";
+import { ConnectInstitutionButton } from "../components/ConnectInstitution";
 import { Card, CardHead, Disclaimer, ErrorState, Money, Spinner, Stat } from "../components/ui";
 import { fmtDate, money, num, qty } from "../lib/format";
 
@@ -37,15 +38,19 @@ export function Dashboard() {
           <h1>Dashboard</h1>
           <p>{summary.data ? `As of ${fmtDate(summary.data.as_of)}` : ""}</p>
         </div>
-        <button
-          className="btn"
-          onClick={() => {
-            qc.invalidateQueries({ queryKey: keys.summary });
-            qc.invalidateQueries({ queryKey: keys.holdings });
-          }}
-        >
-          ↻ Refresh
-        </button>
+        <div className="flex" style={{ gap: 8 }}>
+          <ConnectInstitutionButton />
+          <button
+            className="btn"
+            onClick={() => {
+              qc.invalidateQueries({ queryKey: keys.summary });
+              qc.invalidateQueries({ queryKey: keys.holdings });
+              qc.invalidateQueries({ queryKey: keys.accounts });
+            }}
+          >
+            ↻ Refresh
+          </button>
+        </div>
       </div>
 
       {/* Stat tiles — GET /api/tax/summary */}
