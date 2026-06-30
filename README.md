@@ -14,6 +14,9 @@ productizing it.
 > **federal + California** in v1. Consult a professional before trading.
 
 [![CI](https://github.com/karthikrao-23/Squirrel/actions/workflows/ci.yml/badge.svg)](https://github.com/karthikrao-23/Squirrel/actions/workflows/ci.yml)
+[![coverage](https://img.shields.io/endpoint?url=https://karthikrao-23.github.io/Squirrel/coverage-badge.json)](https://karthikrao-23.github.io/Squirrel/)
+
+> 📊 **[Coverage report](https://karthikrao-23.github.io/Squirrel/)** — the badge above shows total line coverage; click it for the full per-file `llvm-cov` HTML report (published from CI on every push to `main`).
 
 ---
 
