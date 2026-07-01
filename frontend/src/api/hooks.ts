@@ -2,11 +2,12 @@
 // and stable so mutations can invalidate precisely.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { get, patch, post } from "./client";
+import { del, get, patch, post } from "./client";
 import type {
   Account,
   AccountLot,
   Alert,
+  Connection,
   ConnectResponse,
   HarvestCandidate,
   Holding,
@@ -24,6 +25,7 @@ export const keys = {
   profile: ["profile"] as const,
   accounts: ["accounts"] as const,
   accountLots: ["accounts", "lots"] as const,
+  connections: ["plaid", "connections"] as const,
   holdings: ["holdings"] as const,
   portfolioHistory: ["portfolio", "history"] as const,
   retirement: ["retirement"] as const,
@@ -126,6 +128,36 @@ export const useHoldings = () =>
     queryKey: keys.holdings,
     queryFn: () => get<{ holdings: Holding[] }>("/api/holdings").then((r) => r.holdings),
   });
+
+export const useConnections = () =>
+  useQuery({
+    queryKey: keys.connections,
+    queryFn: () =>
+      get<{ connections: Connection[] }>("/api/plaid/items").then((r) => r.connections),
+  });
+
+/** Remove a Plaid connection; its accounts/holdings/transactions/lots go with
+ *  it, so refresh everything the portfolio derives from them. */
+export function useRemoveConnection() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => del<{ removed: boolean }>(`/api/plaid/items/${id}`),
+    onSuccess: () => {
+      for (const key of [
+        keys.connections,
+        keys.accounts,
+        keys.accountLots,
+        keys.holdings,
+        keys.summary,
+        keys.harvest,
+        keys.retirement,
+        keys.portfolioHistory,
+      ]) {
+        qc.invalidateQueries({ queryKey: key });
+      }
+    },
+  });
+}
 
 export const usePortfolioHistory = () =>
   useQuery({

@@ -1,8 +1,9 @@
 import { useMemo, useState } from "react";
-import { useAccountLots } from "../api/hooks";
+import { useAccountLots, useConnections, useRemoveConnection } from "../api/hooks";
 import type { AccountLot } from "../api/types";
 import {
   Card,
+  CardHead,
   EmptyState,
   ErrorState,
   Money,
@@ -207,6 +208,83 @@ function AccountCard({ group }: { group: AccountGroup }) {
   );
 }
 
+/** Manage Plaid connections. A duplicate connection (same institution linked
+ *  twice) shows up as two rows here; removing one deletes its accounts + lots. */
+function Connections() {
+  const connections = useConnections();
+  const remove = useRemoveConnection();
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+
+  const list = connections.data ?? [];
+  if (list.length === 0) return null; // nothing to manage (or still loading)
+
+  // Flag connections that share an institution — likely the accidental re-link.
+  const instCounts = new Map<string, number>();
+  for (const c of list) {
+    const key = c.institution_id ?? c.institution_name ?? c.id;
+    instCounts.set(key, (instCounts.get(key) ?? 0) + 1);
+  }
+
+  return (
+    <Card className="mt16">
+      <CardHead title="Connections" />
+      <div className="card-body">
+        <p className="faint" style={{ marginTop: 0, fontSize: 13 }}>
+          Each row is one Plaid link. Removing a connection also removes its accounts and their
+          tax lots, and disconnects it from Plaid.
+        </p>
+        {list.map((c) => {
+          const key = c.institution_id ?? c.institution_name ?? c.id;
+          const dup = (instCounts.get(key) ?? 0) > 1;
+          const confirming = confirmId === c.id;
+          const busy = remove.isPending && remove.variables === c.id;
+          const n = c.accounts.length;
+          return (
+            <div key={c.id} className="conn-row">
+              <div className="conn-info">
+                <div className="conn-title">
+                  <strong>{c.institution_name ?? "Connected institution"}</strong>
+                  {dup && <span className="chip warn">possible duplicate</span>}
+                </div>
+                <div className="faint" style={{ fontSize: 12 }}>
+                  Linked {fmtDate(c.created_at)} ·{" "}
+                  {n === 0 ? "no accounts" : c.accounts.map((a) => a.name).join(", ")}
+                </div>
+              </div>
+              {confirming ? (
+                <div className="flex">
+                  <span className="faint" style={{ fontSize: 12, alignSelf: "center" }}>
+                    Remove {n} account{n === 1 ? "" : "s"}?
+                  </span>
+                  <button
+                    className="btn danger sm"
+                    disabled={busy}
+                    onClick={() => remove.mutate(c.id, { onSuccess: () => setConfirmId(null) })}
+                  >
+                    {busy ? "Removing…" : "Remove"}
+                  </button>
+                  <button className="btn sm" disabled={busy} onClick={() => setConfirmId(null)}>
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button className="btn sm" onClick={() => setConfirmId(c.id)}>
+                  Disconnect
+                </button>
+              )}
+            </div>
+          );
+        })}
+        {remove.isError && (
+          <div className="loss mt16" style={{ fontSize: 13 }}>
+            {(remove.error as Error).message}
+          </div>
+        )}
+      </div>
+    </Card>
+  );
+}
+
 export function Accounts() {
   const accountLots = useAccountLots();
   const groups = useMemo(() => groupByAccount(accountLots.data ?? []), [accountLots.data]);
@@ -217,6 +295,8 @@ export function Accounts() {
         <h1>Accounts</h1>
         <p>Open tax lots held in each connected account, with per-account totals.</p>
       </div>
+
+      <Connections />
 
       {accountLots.isLoading ? (
         <Card>

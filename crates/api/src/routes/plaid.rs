@@ -7,9 +7,9 @@
 //! - `POST /api/plaid/webhook`      → Plaid pings us when data changes; re-sync
 
 use axum::body::Bytes;
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
-use axum::routing::post;
+use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -28,6 +28,8 @@ pub fn router() -> Router<AppState> {
         .route("/api/plaid/link-token", post(link_token))
         .route("/api/plaid/exchange", post(exchange))
         .route("/api/plaid/resync", post(resync))
+        .route("/api/plaid/items", get(list_items))
+        .route("/api/plaid/items/{id}", delete(remove_connection))
         .route("/api/plaid/sandbox/connect", post(sandbox_connect))
         .route("/api/plaid/webhook", post(webhook))
 }
@@ -100,6 +102,81 @@ async fn resync(State(state): State<AppState>, user: AuthUser) -> Result<Json<Va
         "holdings": holdings,
         "transactions_inserted": transactions,
     })))
+}
+
+/// `GET /api/plaid/items` — the user's connections (one per Plaid Link session),
+/// each with the accounts it brought in. Powers the "Connections" manager so a
+/// user can see (and remove) a duplicate connection.
+async fn list_items(
+    State(state): State<AppState>,
+    user: AuthUser,
+) -> Result<Json<Value>, AppError> {
+    let items = db::queries::plaid_items::list_for_user(&state.db, user.0.id).await?;
+    let accounts = db::queries::accounts::list(&state.db, user.0.id).await?;
+
+    let connections: Vec<Value> = items
+        .iter()
+        .map(|it| {
+            let accts: Vec<Value> = accounts
+                .iter()
+                .filter(|a| a.plaid_item_id == it.id)
+                .map(|a| {
+                    let kind =
+                        domain::accounts::AccountKind::from_subtype(a.subtype.as_deref()).as_str();
+                    json!({ "id": a.id, "name": a.name, "subtype": a.subtype, "kind": kind })
+                })
+                .collect();
+            json!({
+                "id": it.id,
+                "institution_name": it.institution_name,
+                "institution_id": it.institution_id,
+                "status": it.status,
+                "created_at": it.created_at,
+                "accounts": accts,
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "connections": connections })))
+}
+
+/// `DELETE /api/plaid/items/{id}` — remove a connection: disconnect it on Plaid's
+/// side (best-effort) and delete the local item, which cascades to its accounts,
+/// holdings, transactions, and tax lots. Removing at the connection level (not a
+/// single account) is deliberate: the item's next sync would just re-create any
+/// account we deleted while the connection stays live.
+async fn remove_connection(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Value>, AppError> {
+    let item = db::queries::plaid_items::find_by_id(&state.db, user.0.id, id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+
+    // Disconnect on Plaid's side so the token is invalidated and no more
+    // webhooks/billing accrue. A failure here must not block local removal — the
+    // user asked for it gone, so we log and proceed to delete our rows.
+    if state.plaid.is_configured() {
+        if let Some(key) = state.config.token_encryption_key {
+            match crate::crypto::decrypt(&key, &item.access_token_encrypted)
+                .ok()
+                .and_then(|b| String::from_utf8(b).ok())
+            {
+                Some(token) => {
+                    if let Err(e) = state.plaid.remove_item(&token).await {
+                        tracing::warn!(error = %e, item = %item.id, "plaid item/remove failed; removing locally anyway");
+                    }
+                }
+                None => {
+                    tracing::warn!(item = %item.id, "could not decrypt access token; removing locally anyway");
+                }
+            }
+        }
+    }
+
+    let removed = db::queries::plaid_items::delete(&state.db, user.0.id, id).await? > 0;
+    tracing::info!(user = %user.0.id, item = %id, removed, "connection removed");
+    Ok(Json(json!({ "removed": removed })))
 }
 
 /// `POST /api/plaid/sandbox/connect` — end-to-end test path without a frontend.
