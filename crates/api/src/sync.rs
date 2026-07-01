@@ -153,6 +153,7 @@ pub async fn sync_item(
             a.official_name.as_deref(),
             a.account_type.as_deref(),
             a.subtype.as_deref(),
+            odec(a.balances.as_ref().and_then(|b| b.current)),
         )
         .await?;
         acct_map.insert(a.account_id.clone(), id);

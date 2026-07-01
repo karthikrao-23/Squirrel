@@ -95,6 +95,22 @@ export interface AccountLot {
   close_price: Dec | null;
 }
 
+// An account with no lots, valued from Plaid's reported balance (holdings
+// unavailable, e.g. Fidelity BrokerageLink).
+export interface AccountBalanceOnly {
+  account_id: Uuid;
+  name: string;
+  subtype: string | null;
+  kind: "taxable" | "retirement";
+  current_balance: Dec;
+}
+
+// GET /api/accounts/lots
+export interface AccountLotsResp {
+  lots: AccountLot[];
+  balance_only: AccountBalanceOnly[];
+}
+
 // Shared tax estimate breakdown
 export interface TaxEstimate {
   federal: Dec;
@@ -128,16 +144,19 @@ export interface RetirementAccount {
   name: string;
   subtype: string | null;
   market_value: Dec;
-  cost_basis: Dec;
-  unrealized: Dec;
+  // Null for balance_only accounts (value from Plaid balance, no cost basis).
+  cost_basis: Dec | null;
+  unrealized: Dec | null;
+  balance_only: boolean;
 }
 export interface RetirementTotals {
-  market_value: Dec;
+  market_value: Dec; // includes balance_only accounts
   cost_basis: Dec;
   unrealized: Dec;
   simple_return: number | null; // fraction, e.g. 0.12 = +12%
   irr: number | null; // money-weighted, annualized
   twr: number | null; // time-weighted (null until ≥2 daily snapshots)
+  return_excludes: number; // # balance_only accounts excluded from the return
 }
 export interface RetirementSummary {
   accounts: RetirementAccount[];

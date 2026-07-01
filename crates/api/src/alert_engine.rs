@@ -140,6 +140,17 @@ pub async fn record_snapshot_for_user(state: &AppState, user: &User) -> anyhow::
         bucket.1 += cb;
     }
 
+    // Accounts valued from Plaid's balance (no lots) add to market value only.
+    for a in db::queries::accounts::balance_only_accounts(&state.db, user.id).await? {
+        total.0 += a.current_balance;
+        let bucket = if AccountKind::from_subtype(a.subtype.as_deref()).is_retirement() {
+            &mut retirement
+        } else {
+            &mut taxable
+        };
+        bucket.0 += a.current_balance;
+    }
+
     for (scope, (mv, cb)) in [
         ("total", total),
         ("retirement", retirement),

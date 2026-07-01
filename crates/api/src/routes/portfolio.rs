@@ -101,7 +101,28 @@ async fn list_account_lots(
             }
         })
         .collect();
-    Ok(Json(json!({ "lots": lots })))
+
+    // Accounts with no lots that we value from Plaid's balance (holdings
+    // unavailable). Returned alongside the lots so the page can show them as
+    // value-only cards rather than dropping them.
+    let balance_only: Vec<Value> =
+        db::queries::accounts::balance_only_accounts(&state.db, user.0.id)
+            .await?
+            .into_iter()
+            .map(|a| {
+                let kind =
+                    domain::accounts::AccountKind::from_subtype(a.subtype.as_deref()).as_str();
+                json!({
+                    "account_id": a.account_id,
+                    "name": a.name,
+                    "subtype": a.subtype,
+                    "kind": kind,
+                    "current_balance": a.current_balance,
+                })
+            })
+            .collect();
+
+    Ok(Json(json!({ "lots": lots, "balance_only": balance_only })))
 }
 
 async fn list_holdings(

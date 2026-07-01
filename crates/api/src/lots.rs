@@ -12,7 +12,7 @@
 //! holdings so the totals match Plaid's positions exactly — adding opening-balance
 //! lots for the shortfall and trimming the excess.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 
 use chrono::{Duration, NaiveDate, Utc};
 use db::queries::holdings::Position;
@@ -99,8 +99,9 @@ fn qty_epsilon() -> Decimal {
 /// * **Over-count** — FIFO left more shares lotted than the holding has (a position
 ///   partly/fully sold whose sells fell outside the ~24-month window). Trim the
 ///   excess oldest-first (FIFO sells oldest); a security no longer held has its
-///   lots dropped entirely. Exception: an account Plaid reports **no** holdings for
-///   is treated as holdings-*unavailable* (not "all sold") and keeps its FIFO lots.
+///   lots dropped entirely. Accounts Plaid won't share holdings for (e.g. Fidelity
+///   BrokerageLink) therefore end up with no lots — their value is anchored to the
+///   Plaid account balance instead (see `accounts::balance_only_accounts`).
 /// * **Under-count** — the holding has more shares than were lotted (bought before
 ///   the window). Append one opening-balance lot for the difference, carrying the
 ///   residual of Plaid's position cost basis, dated before our earliest record and
@@ -117,14 +118,6 @@ fn reconcile(
         .map(|p| ((p.account_id, p.security_id), p.quantity))
         .collect();
 
-    // Accounts Plaid actually reported holdings for. For an account *absent* here,
-    // Plaid returned no holdings at all — which means holdings are **unavailable**
-    // (e.g. Fidelity BrokerageLink, whose holdings endpoint is blind but whose
-    // transactions we do get), not that every position was sold. We must not treat
-    // "no holding" as "zero held" there, or we'd trim every FIFO-reconstructed lot
-    // to nothing and the account would show empty despite real buy history.
-    let accounts_with_holdings: HashSet<Uuid> = positions.iter().map(|p| p.account_id).collect();
-
     // --- Over-count: trim each position's lots down to its holding quantity
     // (zero when not held), oldest-first. ---
     let mut idx_by_pos: HashMap<(Uuid, Uuid), Vec<usize>> = HashMap::new();
@@ -135,10 +128,6 @@ fn reconcile(
             .push(i);
     }
     for (key, mut idxs) in idx_by_pos {
-        // Holdings unavailable for this account → trust the FIFO reconstruction.
-        if !accounts_with_holdings.contains(&key.0) {
-            continue;
-        }
         let held = target_qty.get(&key).copied().unwrap_or(Decimal::ZERO);
         let current: Decimal = idxs.iter().map(|&i| new_lots[i].remaining_quantity).sum();
         let mut excess = current - held;
@@ -337,22 +326,17 @@ mod tests {
     }
 
     #[test]
-    fn holdings_unavailable_keeps_fifo_lots() {
-        // The account has NO holdings coverage at all — Plaid returned no holdings
-        // for it (e.g. Fidelity BrokerageLink, whose holdings endpoint is blind).
-        // That is *not* "everything sold": trust the FIFO reconstruction instead of
-        // trimming every lot to zero.
+    fn no_holdings_drops_all_lots() {
+        // No positions at all → every lot is trimmed away. Accounts Plaid won't
+        // share holdings for (e.g. Fidelity BrokerageLink) land here and are valued
+        // from their Plaid balance instead (accounts::balance_only_accounts), rather
+        // than from an unreliable transaction-window estimate.
         let mut lots = vec![
             lot(date(2024, 8, 1), d(5), d(10)),
             lot(date(2025, 3, 1), d(3), d(15)),
         ];
-        run(&mut lots, &[]); // no positions anywhere → holdings unavailable
-        assert_eq!(
-            lots.len(),
-            2,
-            "FIFO lots survive when holdings are unavailable"
-        );
-        assert_eq!(total_qty(&lots), d(8));
+        run(&mut lots, &[]); // no positions
+        assert!(lots.is_empty(), "no holdings → no open lots");
     }
 
     #[test]

@@ -91,6 +91,13 @@ async fn summary(
         valued += 1;
     }
 
+    // Fold in accounts valued from Plaid's balance (holdings unavailable, so no
+    // lots). They add to market value only — we have no cost basis for them, so
+    // they don't affect unrealized gain/loss or the tax estimate.
+    for acct in db::queries::accounts::balance_only_accounts(&state.db, user.id).await? {
+        value += acct.current_balance;
+    }
+
     let estimate = tax::estimate_liquidation(status, user.taxable_income, st, lt);
 
     Ok(Json(TaxSummary {

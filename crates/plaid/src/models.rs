@@ -14,6 +14,16 @@ pub struct PlaidAccount {
     #[serde(rename = "type")]
     pub account_type: Option<String>,
     pub subtype: Option<String>,
+    /// Balances Plaid reports for the account. `current` is the total dollar
+    /// value — present even for accounts (e.g. Fidelity BrokerageLink) whose
+    /// per-security holdings Plaid won't share.
+    pub balances: Option<PlaidBalances>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PlaidBalances {
+    pub current: Option<f64>,
+    pub iso_currency_code: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useAccountLots, useConnections, useRemoveConnection } from "../api/hooks";
-import type { AccountLot } from "../api/types";
+import type { AccountBalanceOnly, AccountLot } from "../api/types";
 import {
   Card,
   CardHead,
@@ -285,9 +285,35 @@ function Connections() {
   );
 }
 
+/** An account we can't break into lots — Plaid won't share its holdings — so we
+ *  show its Plaid balance as the value. */
+function BalanceOnlyCard({ account }: { account: AccountBalanceOnly }) {
+  return (
+    <Card className="mt16">
+      <div className="collapse-head" style={{ cursor: "default" }}>
+        <div className="collapse-title">
+          <h2>{account.name}</h2>
+          {account.subtype && <span className="chip">{account.subtype}</span>}
+        </div>
+        <div className="collapse-summary">
+          <span className="num">{money(account.current_balance)}</span>
+        </div>
+      </div>
+      <div className="card-body">
+        <p className="faint" style={{ margin: 0, fontSize: 13 }}>
+          Value from Plaid's account balance. This institution doesn't share per-position holdings,
+          so lot-level detail (cost basis, gains, harvesting) isn't available for this account.
+        </p>
+      </div>
+    </Card>
+  );
+}
+
 export function Accounts() {
   const accountLots = useAccountLots();
-  const groups = useMemo(() => groupByAccount(accountLots.data ?? []), [accountLots.data]);
+  const lots = accountLots.data?.lots ?? [];
+  const balanceOnly = accountLots.data?.balance_only ?? [];
+  const groups = useMemo(() => groupByAccount(lots), [accountLots.data]);
 
   return (
     <div className="app">
@@ -306,7 +332,7 @@ export function Accounts() {
         <Card>
           <ErrorState error={accountLots.error} onRetry={() => accountLots.refetch()} />
         </Card>
-      ) : groups.length === 0 ? (
+      ) : groups.length === 0 && balanceOnly.length === 0 ? (
         <Card>
           <EmptyState
             title="No open lots"
@@ -314,7 +340,14 @@ export function Accounts() {
           />
         </Card>
       ) : (
-        groups.map((g) => <AccountCard key={g.account_id} group={g} />)
+        <>
+          {groups.map((g) => (
+            <AccountCard key={g.account_id} group={g} />
+          ))}
+          {balanceOnly.map((a) => (
+            <BalanceOnlyCard key={a.account_id} account={a} />
+          ))}
+        </>
       )}
 
       <p className="foot">Showing open lots grouped by account · v1.</p>

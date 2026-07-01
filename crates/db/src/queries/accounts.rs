@@ -1,6 +1,7 @@
 //! Account queries. Upserts on Plaid's account id so re-syncs are idempotent.
 
-use sqlx::PgPool;
+use rust_decimal::Decimal;
+use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
 
 use crate::models::Account;
@@ -23,16 +24,19 @@ pub async fn upsert(
     official_name: Option<&str>,
     account_type: Option<&str>,
     subtype: Option<&str>,
+    current_balance: Option<Decimal>,
 ) -> sqlx::Result<Uuid> {
     sqlx::query_scalar::<_, Uuid>(
         r#"
-        INSERT INTO accounts (user_id, plaid_item_id, plaid_account_id, name, official_name, type, subtype)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        INSERT INTO accounts (user_id, plaid_item_id, plaid_account_id, name, official_name, type, subtype, current_balance)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         ON CONFLICT (user_id, plaid_account_id) DO UPDATE
         SET name = EXCLUDED.name,
             official_name = EXCLUDED.official_name,
             type = EXCLUDED.type,
             subtype = EXCLUDED.subtype,
+            -- keep a previously-known balance if this sync didn't report one
+            current_balance = COALESCE(EXCLUDED.current_balance, accounts.current_balance),
             updated_at = now()
         RETURNING id
         "#,
@@ -44,6 +48,42 @@ pub async fn upsert(
     .bind(official_name)
     .bind(account_type)
     .bind(subtype)
+    .bind(current_balance)
     .fetch_one(pool)
+    .await
+}
+
+/// An account whose value we anchor to Plaid's reported balance because it has
+/// no open lots (holdings unavailable, e.g. Fidelity BrokerageLink).
+#[derive(Debug, Clone, FromRow)]
+pub struct BalanceOnlyAccount {
+    pub account_id: Uuid,
+    pub name: String,
+    pub subtype: Option<String>,
+    pub current_balance: Decimal,
+}
+
+/// Accounts that report a Plaid balance but have **no open tax lots** — their
+/// value comes from the balance, not from reconstructed positions. Used to fold
+/// holdings-unavailable accounts into the portfolio/retirement totals.
+pub async fn balance_only_accounts(
+    pool: &PgPool,
+    user_id: Uuid,
+) -> sqlx::Result<Vec<BalanceOnlyAccount>> {
+    sqlx::query_as::<_, BalanceOnlyAccount>(
+        r#"
+        SELECT a.id AS account_id, a.name, a.subtype, a.current_balance
+        FROM accounts a
+        WHERE a.user_id = $1
+          AND a.current_balance IS NOT NULL
+          AND NOT EXISTS (
+              SELECT 1 FROM tax_lots l
+              WHERE l.account_id = a.id AND l.status = 'open' AND l.remaining_quantity > 0
+          )
+        ORDER BY a.name
+        "#,
+    )
+    .bind(user_id)
+    .fetch_all(pool)
     .await
 }

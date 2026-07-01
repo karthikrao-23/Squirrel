@@ -87,7 +87,17 @@ async fn summary(State(state): State<AppState>, user: AuthUser) -> Result<Json<V
         None
     };
 
-    let account_rows: Vec<Value> = accounts
+    // Retirement accounts valued from Plaid's balance (holdings unavailable, so no
+    // lots). They count toward the total *value* but not the return metrics —
+    // without cost basis or a value history we can't attribute a return to them.
+    let balance_only: Vec<_> = db::queries::accounts::balance_only_accounts(&state.db, user.0.id)
+        .await?
+        .into_iter()
+        .filter(|a| AccountKind::from_subtype(a.subtype.as_deref()).is_retirement())
+        .collect();
+    let balance_only_value: Decimal = balance_only.iter().map(|a| a.current_balance).sum();
+
+    let mut account_rows: Vec<Value> = accounts
         .into_iter()
         .map(|(name, (subtype, mv, cb))| {
             json!({
@@ -96,19 +106,33 @@ async fn summary(State(state): State<AppState>, user: AuthUser) -> Result<Json<V
                 "market_value": mv,
                 "cost_basis": cb,
                 "unrealized": mv - cb,
+                "balance_only": false,
             })
         })
         .collect();
+    for a in &balance_only {
+        account_rows.push(json!({
+            "name": a.name,
+            "subtype": a.subtype,
+            "market_value": a.current_balance,
+            "cost_basis": Value::Null,
+            "unrealized": Value::Null,
+            "balance_only": true,
+        }));
+    }
 
     Ok(Json(json!({
         "accounts": account_rows,
         "total": {
-            "market_value": total_mv,
+            // Value includes balance-only accounts; the return metrics below are
+            // lot-based and exclude them (see `return_excludes`).
+            "market_value": total_mv + balance_only_value,
             "cost_basis": total_cb,
             "unrealized": total_mv - total_cb,
             "simple_return": simple_return,
             "irr": irr,
             "twr": twr,
+            "return_excludes": balance_only.len(),
         },
         "history": history,
     })))

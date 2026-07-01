@@ -83,6 +83,8 @@ pub struct Account {
     pub official_name: Option<String>,
     pub r#type: Option<String>,
     pub subtype: Option<String>,
+    /// Plaid's authoritative total dollar value for the account (balances.current).
+    pub current_balance: Option<Decimal>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
