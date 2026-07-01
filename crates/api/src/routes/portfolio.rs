@@ -55,7 +55,19 @@ async fn list_accounts(
     user: AuthUser,
 ) -> Result<Json<Value>, AppError> {
     let accounts = db::queries::accounts::list(&state.db, user.0.id).await?;
-    Ok(Json(json!({ "accounts": accounts })))
+    // Tag each account taxable vs retirement (derived from its Plaid subtype).
+    let enriched: Vec<Value> = accounts
+        .iter()
+        .map(|a| {
+            let mut v = serde_json::to_value(a).unwrap_or_else(|_| json!({}));
+            if let Some(obj) = v.as_object_mut() {
+                let kind = domain::accounts::AccountKind::from_subtype(a.subtype.as_deref());
+                obj.insert("kind".into(), json!(kind.as_str()));
+            }
+            v
+        })
+        .collect();
+    Ok(Json(json!({ "accounts": enriched })))
 }
 
 async fn list_account_lots(
@@ -132,6 +144,6 @@ async fn portfolio_history(
     State(state): State<AppState>,
     user: AuthUser,
 ) -> Result<Json<Value>, AppError> {
-    let history = db::queries::snapshots::history(&state.db, user.0.id).await?;
+    let history = db::queries::snapshots::history(&state.db, user.0.id, "total").await?;
     Ok(Json(json!({ "history": history })))
 }

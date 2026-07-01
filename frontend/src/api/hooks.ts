@@ -12,6 +12,7 @@ import type {
   Holding,
   LinkTokenResp,
   PortfolioSnapshot,
+  RetirementSummary,
   SimulateReq,
   SimulateResp,
   TaxSummary,
@@ -25,6 +26,7 @@ export const keys = {
   accountLots: ["accounts", "lots"] as const,
   holdings: ["holdings"] as const,
   portfolioHistory: ["portfolio", "history"] as const,
+  retirement: ["retirement"] as const,
   summary: ["tax", "summary"] as const,
   harvest: ["tax", "harvest"] as const,
   alerts: (unreadOnly: boolean) => ["alerts", { unreadOnly }] as const,
@@ -130,6 +132,12 @@ export const usePortfolioHistory = () =>
     queryKey: keys.portfolioHistory,
     queryFn: () =>
       get<{ history: PortfolioSnapshot[] }>("/api/portfolio/history").then((r) => r.history),
+  });
+
+export const useRetirement = () =>
+  useQuery({
+    queryKey: keys.retirement,
+    queryFn: () => get<RetirementSummary>("/api/retirement"),
   });
 
 // ---- Tax ----

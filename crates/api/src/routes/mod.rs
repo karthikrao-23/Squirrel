@@ -8,6 +8,7 @@ pub mod internal;
 pub mod plaid;
 pub mod portfolio;
 pub mod profile;
+pub mod retirement;
 pub mod tax;
 
 use axum::routing::any;
@@ -25,6 +26,7 @@ pub fn router(state: AppState) -> Router {
         .merge(portfolio::router())
         .merge(profile::router())
         .merge(tax::router())
+        .merge(retirement::router())
         .merge(alerts::router())
         // Unmatched `/api/*` returns a JSON 404 so the SPA static fallback can't
         // swallow an unknown API path into a 200 HTML page.

@@ -7,8 +7,10 @@
 //! - `lots`  (M3): FIFO cost-basis lot reconstruction from transactions
 //! - `alerts`(M5): "good time to sell" and tax-loss-harvest rules
 
+pub mod accounts;
 pub mod alerts;
 pub mod lots;
+pub mod performance;
 pub mod tax;
 
 /// Filing status drives which federal bracket table applies.

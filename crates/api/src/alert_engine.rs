@@ -114,19 +114,39 @@ pub async fn send_pending_emails_for_user(state: &AppState, user: &User) -> anyh
 /// Market value sums only lots with a known current price; cost basis sums all
 /// open lots. Backs the dashboard's value-over-time chart.
 pub async fn record_snapshot_for_user(state: &AppState, user: &User) -> anyhow::Result<()> {
+    use domain::accounts::AccountKind;
     let today = Utc::now().date_naive();
-    let lots = db::queries::tax_lots::list_open_with_price(&state.db, user.id).await?;
+    // Per-account lot view so we can split by account kind and snapshot each scope.
+    let lots = db::queries::tax_lots::list_open_with_account(&state.db, user.id).await?;
 
-    let mut market_value = Decimal::ZERO;
-    let mut cost_basis = Decimal::ZERO;
+    // (market_value, cost_basis) per scope.
+    let mut total = (Decimal::ZERO, Decimal::ZERO);
+    let mut retirement = (Decimal::ZERO, Decimal::ZERO);
+    let mut taxable = (Decimal::ZERO, Decimal::ZERO);
     for lot in &lots {
-        cost_basis += lot.remaining_quantity * lot.cost_basis_per_share;
-        if let Some(price) = lot.close_price {
-            market_value += lot.remaining_quantity * price;
-        }
+        let cb = lot.remaining_quantity * lot.cost_basis_per_share;
+        let mv = lot
+            .close_price
+            .map(|p| lot.remaining_quantity * p)
+            .unwrap_or(Decimal::ZERO);
+        total.0 += mv;
+        total.1 += cb;
+        let bucket = if AccountKind::from_subtype(lot.account_subtype.as_deref()).is_retirement() {
+            &mut retirement
+        } else {
+            &mut taxable
+        };
+        bucket.0 += mv;
+        bucket.1 += cb;
     }
 
-    db::queries::snapshots::upsert(&state.db, user.id, today, market_value, cost_basis).await?;
+    for (scope, (mv, cb)) in [
+        ("total", total),
+        ("retirement", retirement),
+        ("taxable", taxable),
+    ] {
+        db::queries::snapshots::upsert(&state.db, user.id, today, scope, mv, cb).await?;
+    }
     Ok(())
 }
 
