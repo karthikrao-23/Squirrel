@@ -133,6 +133,18 @@ async fn harvest(
     let as_of = today();
     let lots = db::queries::tax_lots::list_open_with_price(&state.db, user.id).await?;
 
+    // Retirement accounts (IRA/401k/…) are tax-advantaged — harvesting there has
+    // no tax benefit, so their lots are never candidates.
+    let retirement: std::collections::HashSet<Uuid> =
+        db::queries::accounts::list(&state.db, user.id)
+            .await?
+            .into_iter()
+            .filter(|a| {
+                domain::accounts::AccountKind::from_subtype(a.subtype.as_deref()).is_retirement()
+            })
+            .map(|a| a.id)
+            .collect();
+
     let since = as_of - Duration::days(WASH_SALE_DAYS);
     let recent_buys: std::collections::HashSet<Uuid> =
         db::queries::transactions::recent_buy_security_ids(&state.db, user.id, since)
@@ -142,6 +154,9 @@ async fn harvest(
 
     let mut candidates = Vec::new();
     for lot in &lots {
+        if retirement.contains(&lot.account_id) {
+            continue; // no harvesting in tax-advantaged accounts
+        }
         let Some(price) = lot.close_price else {
             continue;
         };

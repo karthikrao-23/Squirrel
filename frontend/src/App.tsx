@@ -9,6 +9,7 @@ import { Auth } from "./screens/Auth";
 import { Dashboard } from "./screens/Dashboard";
 import { Harvest } from "./screens/Harvest";
 import { Onboarding } from "./screens/Onboarding";
+import { Retirement } from "./screens/Retirement";
 
 /** Auth boundary: gates the whole app on a valid session. While `me` resolves we
  *  show a spinner; a 401 (or any error) drops to the login screen; success
@@ -64,6 +65,7 @@ export function App() {
           <Route path="/" element={<Dashboard />} />
           <Route path="/accounts" element={<Accounts />} />
           <Route path="/harvest" element={<Harvest />} />
+          <Route path="/retirement" element={<Retirement />} />
           <Route path="/alerts" element={<Alerts />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />

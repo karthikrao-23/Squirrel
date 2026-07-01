@@ -106,6 +106,28 @@ export interface PortfolioSnapshot {
   cost_basis: Dec;
 }
 
+// GET /api/retirement — performance view of tax-advantaged accounts, as a group.
+export interface RetirementAccount {
+  name: string;
+  subtype: string | null;
+  market_value: Dec;
+  cost_basis: Dec;
+  unrealized: Dec;
+}
+export interface RetirementTotals {
+  market_value: Dec;
+  cost_basis: Dec;
+  unrealized: Dec;
+  simple_return: number | null; // fraction, e.g. 0.12 = +12%
+  irr: number | null; // money-weighted, annualized
+  twr: number | null; // time-weighted (null until ≥2 daily snapshots)
+}
+export interface RetirementSummary {
+  accounts: RetirementAccount[];
+  total: RetirementTotals;
+  history: PortfolioSnapshot[];
+}
+
 // GET /api/tax/harvest → { candidates: HarvestCandidate[] }
 export interface HarvestCandidate {
   lot_id: Uuid;

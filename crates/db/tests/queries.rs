@@ -277,16 +277,58 @@ async fn snapshots_upsert_idempotent_and_history_ordered_per_user(
     // A second user to prove history is scoped per user.
     let other = queries::users::create(&pool, "other@example.com", "hash").await?;
 
-    // Two upserts for the same (user, day): the second must overwrite, not add.
-    queries::snapshots::upsert(&pool, user.id, date("2026-01-01"), dec!(1000), dec!(800)).await?;
-    queries::snapshots::upsert(&pool, user.id, date("2026-01-01"), dec!(1500), dec!(900)).await?;
+    // Two upserts for the same (user, day, scope): the second must overwrite.
+    queries::snapshots::upsert(
+        &pool,
+        user.id,
+        date("2026-01-01"),
+        "total",
+        dec!(1000),
+        dec!(800),
+    )
+    .await?;
+    queries::snapshots::upsert(
+        &pool,
+        user.id,
+        date("2026-01-01"),
+        "total",
+        dec!(1500),
+        dec!(900),
+    )
+    .await?;
     // An earlier day, inserted after the later one, to prove ordering by as_of.
-    queries::snapshots::upsert(&pool, user.id, date("2025-12-31"), dec!(500), dec!(400)).await?;
+    queries::snapshots::upsert(
+        &pool,
+        user.id,
+        date("2025-12-31"),
+        "total",
+        dec!(500),
+        dec!(400),
+    )
+    .await?;
+    // A different scope on the same day is a distinct row.
+    queries::snapshots::upsert(
+        &pool,
+        user.id,
+        date("2026-01-01"),
+        "retirement",
+        dec!(200),
+        dec!(150),
+    )
+    .await?;
 
     // The other user's snapshot must not leak into our history.
-    queries::snapshots::upsert(&pool, other.id, date("2026-01-01"), dec!(9999), dec!(9999)).await?;
+    queries::snapshots::upsert(
+        &pool,
+        other.id,
+        date("2026-01-01"),
+        "total",
+        dec!(9999),
+        dec!(9999),
+    )
+    .await?;
 
-    let history = queries::snapshots::history(&pool, user.id).await?;
+    let history = queries::snapshots::history(&pool, user.id, "total").await?;
     assert_eq!(
         history.len(),
         2,
@@ -299,7 +341,12 @@ async fn snapshots_upsert_idempotent_and_history_ordered_per_user(
     assert_eq!(history[1].market_value, dec!(1500));
     assert_eq!(history[1].cost_basis, dec!(900));
 
-    let other_history = queries::snapshots::history(&pool, other.id).await?;
+    // Scope filters: the "retirement" row doesn't appear in "total" history.
+    let retirement = queries::snapshots::history(&pool, user.id, "retirement").await?;
+    assert_eq!(retirement.len(), 1);
+    assert_eq!(retirement[0].market_value, dec!(200));
+
+    let other_history = queries::snapshots::history(&pool, other.id, "total").await?;
     assert_eq!(other_history.len(), 1, "history is scoped per user");
     assert_eq!(other_history[0].market_value, dec!(9999));
     Ok(())
