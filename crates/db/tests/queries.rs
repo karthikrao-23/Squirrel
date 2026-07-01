@@ -48,6 +48,7 @@ async fn holdings_upsert_is_idempotent_per_account_security(pool: PgPool) -> sql
         None,
         Some("investment"),
         Some("brokerage"),
+        None,
     )
     .await?;
     let sec = queries::securities::upsert(
@@ -111,6 +112,7 @@ async fn transaction_insert_ignores_duplicates(pool: PgPool) -> sqlx::Result<()>
         None,
         None,
         None,
+        None,
     )
     .await?;
 
@@ -154,6 +156,7 @@ async fn tax_lots_replace_is_atomic_and_overwrites(pool: PgPool) -> sqlx::Result
         item.id,
         "acct_1",
         "Brokerage",
+        None,
         None,
         None,
         None,
@@ -233,6 +236,7 @@ async fn list_open_with_account_returns_account_info_scoped_by_user(
                 None,
                 Some("investment"),
                 subtype,
+                None,
             )
             .await?;
             let lots = vec![db::queries::tax_lots::NewLot {
@@ -434,6 +438,7 @@ async fn delete_plaid_item_cascades_and_is_user_scoped(pool: PgPool) -> sqlx::Re
         None,
         Some("investment"),
         Some("ira"),
+        None,
     )
     .await?;
     let keep_acct = queries::accounts::upsert(
@@ -445,6 +450,7 @@ async fn delete_plaid_item_cascades_and_is_user_scoped(pool: PgPool) -> sqlx::Re
         None,
         Some("investment"),
         Some("brokerage"),
+        None,
     )
     .await?;
 
@@ -494,5 +500,87 @@ async fn delete_plaid_item_cascades_and_is_user_scoped(pool: PgPool) -> sqlx::Re
     assert!(queries::plaid_items::find_by_id(&pool, bob.id, bob_item.id)
         .await?
         .is_some());
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn balance_only_accounts_are_those_with_balance_and_no_open_lots(
+    pool: PgPool,
+) -> sqlx::Result<()> {
+    let sec = queries::securities::upsert(
+        &pool,
+        "sec_1",
+        Some("AAPL"),
+        None,
+        None,
+        None,
+        Some(dec!(190)),
+        None,
+        None,
+    )
+    .await?;
+    let user = queries::users::create(&pool, "u@example.com", "hash").await?;
+    let item = queries::plaid_items::upsert(&pool, user.id, "item", b"enc", Some("ins_1")).await?;
+
+    // A: has a balance AND an open lot → NOT balance-only (valued from lots).
+    let a = queries::accounts::upsert(
+        &pool,
+        user.id,
+        item.id,
+        "a",
+        "Covered",
+        None,
+        Some("investment"),
+        Some("brokerage"),
+        Some(dec!(1000)),
+    )
+    .await?;
+    queries::tax_lots::replace_for_user(
+        &pool,
+        user.id,
+        &[db::queries::tax_lots::NewLot {
+            account_id: a,
+            security_id: sec,
+            open_date: date("2020-01-01"),
+            original_quantity: dec!(5),
+            remaining_quantity: dec!(5),
+            cost_basis_per_share: dec!(10),
+            source_transaction_id: None,
+        }],
+    )
+    .await?;
+
+    // B: has a balance and NO lots → balance-only (e.g. BrokerageLink).
+    queries::accounts::upsert(
+        &pool,
+        user.id,
+        item.id,
+        "b",
+        "BrokerageLink",
+        None,
+        Some("investment"),
+        Some("brokerage"),
+        Some(dec!(469949.69)),
+    )
+    .await?;
+
+    // C: no balance and no lots → excluded (can't value it).
+    queries::accounts::upsert(
+        &pool,
+        user.id,
+        item.id,
+        "c",
+        "Empty",
+        None,
+        Some("investment"),
+        Some("brokerage"),
+        None,
+    )
+    .await?;
+
+    let bo = queries::accounts::balance_only_accounts(&pool, user.id).await?;
+    assert_eq!(bo.len(), 1, "only the balance+no-lots account qualifies");
+    assert_eq!(bo[0].name, "BrokerageLink");
+    assert_eq!(bo[0].current_balance, dec!(469949.69));
     Ok(())
 }

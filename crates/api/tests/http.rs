@@ -226,6 +226,7 @@ async fn seed_lot(
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -849,6 +850,7 @@ async fn same_institution_two_users_keep_separate_rows(pool: PgPool) {
             item.id,
             "acct_shared",
             "Shared Brokerage",
+            None,
             None,
             None,
             None,

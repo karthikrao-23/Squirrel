@@ -93,6 +93,15 @@ export function Retirement() {
             />
           </div>
 
+          {data.total.return_excludes > 0 && (
+            <p className="faint" style={{ fontSize: 12, marginTop: 8 }}>
+              Return figures (total return, IRR, TWR) exclude {data.total.return_excludes} account
+              {data.total.return_excludes === 1 ? "" : "s"} whose holdings this institution doesn't
+              share via Plaid — their value is included in Value above, but there's no cost basis to
+              compute a return from.
+            </p>
+          )}
+
           {/* Value over time (retirement as a whole) */}
           <Card className="mt16">
             <CardHead title="Retirement value over time" />
@@ -171,9 +180,13 @@ export function Retirement() {
                     <td>{a.name}</td>
                     <td className="muted">{a.subtype ?? "—"}</td>
                     <td className="r num">{money(a.market_value)}</td>
-                    <td className="r num">{money(a.cost_basis)}</td>
+                    <td className="r num">{a.cost_basis == null ? "—" : money(a.cost_basis)}</td>
                     <td className="r">
-                      <Money value={a.unrealized} />
+                      {a.unrealized == null ? (
+                        <span className="faint">—</span>
+                      ) : (
+                        <Money value={a.unrealized} />
+                      )}
                     </td>
                   </tr>
                 ))}
