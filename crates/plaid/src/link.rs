@@ -50,6 +50,16 @@ pub struct SandboxPublicTokenCreateResp {
     pub public_token: String,
 }
 
+#[derive(Serialize)]
+struct ItemRemoveReq<'a> {
+    access_token: &'a str,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ItemRemoveResp {
+    pub request_id: String,
+}
+
 impl PlaidClient {
     /// `/link/token/create` — the token the frontend hands to Plaid Link.
     pub async fn create_link_token(
@@ -82,6 +92,14 @@ impl PlaidClient {
             PublicTokenExchangeReq { public_token },
         )
         .await
+    }
+
+    /// `/item/remove` — invalidate the access token and disconnect the item on
+    /// Plaid's side (stops future webhooks and billing for it). Used when a user
+    /// removes a connection; the local rows are deleted separately.
+    pub async fn remove_item(&self, access_token: &str) -> Result<ItemRemoveResp, PlaidError> {
+        self.post("/item/remove", ItemRemoveReq { access_token })
+            .await
     }
 
     /// `/sandbox/public_token/create` — sandbox-only shortcut that mints a public

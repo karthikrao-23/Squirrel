@@ -125,6 +125,20 @@ body {
 .year-group { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 12px; }
 .year-group table { margin-top: 8px; }
 
+/* Connections manager (Accounts page) */
+.flex { display: flex; gap: 8px; }
+.conn-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 12px 0; border-top: 1px solid var(--border);
+}
+.conn-info { min-width: 0; }
+.conn-title { display: flex; align-items: center; gap: 8px; }
+.btn.sm { padding: 5px 10px; font-size: 12px; }
+.btn.danger {
+  border-color: var(--loss); color: var(--loss); background: var(--surface);
+}
+.btn.danger:hover { background: var(--loss-wash); }
+
 .grid { display: grid; gap: 16px; }
 .grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
 .grid.cols-4 { grid-template-columns: repeat(4, 1fr); }

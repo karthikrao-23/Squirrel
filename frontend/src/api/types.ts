@@ -49,6 +49,23 @@ export interface Account {
   updated_at: IsoDateTime;
 }
 
+// GET /api/plaid/items — one Plaid connection (Link session) + the accounts it
+// brought in. Removing a connection removes those accounts.
+export interface ConnectionAccount {
+  id: Uuid;
+  name: string;
+  subtype: string | null;
+  kind: "taxable" | "retirement";
+}
+export interface Connection {
+  id: Uuid;
+  institution_name: string | null;
+  institution_id: string | null;
+  status: string;
+  created_at: IsoDateTime;
+  accounts: ConnectionAccount[];
+}
+
 // GET /api/holdings → { holdings: Holding[] }
 export interface Holding {
   account_id: Uuid;

@@ -72,3 +72,26 @@ pub async fn list_for_user(pool: &PgPool, user_id: Uuid) -> sqlx::Result<Vec<Pla
     .fetch_all(pool)
     .await
 }
+
+/// A single item by its UUID, scoped to the owning user (`None` if it isn't
+/// theirs or doesn't exist). Used before removing a connection so we can pull the
+/// access token to disconnect on Plaid's side.
+pub async fn find_by_id(pool: &PgPool, user_id: Uuid, id: Uuid) -> sqlx::Result<Option<PlaidItem>> {
+    sqlx::query_as::<_, PlaidItem>("SELECT * FROM plaid_items WHERE id = $1 AND user_id = $2")
+        .bind(id)
+        .bind(user_id)
+        .fetch_optional(pool)
+        .await
+}
+
+/// Delete a user's item; ON DELETE CASCADE removes its accounts, holdings,
+/// transactions, and tax lots. Scoped by `user_id` so one user can't delete
+/// another's connection. Returns the number of rows removed (0 = not found).
+pub async fn delete(pool: &PgPool, user_id: Uuid, id: Uuid) -> sqlx::Result<u64> {
+    let res = sqlx::query("DELETE FROM plaid_items WHERE id = $1 AND user_id = $2")
+        .bind(id)
+        .bind(user_id)
+        .execute(pool)
+        .await?;
+    Ok(res.rows_affected())
+}

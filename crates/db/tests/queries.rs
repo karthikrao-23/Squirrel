@@ -399,3 +399,100 @@ async fn alerts_dedup_until_read(pool: PgPool) -> sqlx::Result<()> {
     assert_eq!(queries::alerts::list(&pool, user.id, true).await?.len(), 1);
     Ok(())
 }
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn delete_plaid_item_cascades_and_is_user_scoped(pool: PgPool) -> sqlx::Result<()> {
+    let sec = queries::securities::upsert(
+        &pool,
+        "sec_1",
+        Some("AAPL"),
+        None,
+        None,
+        None,
+        Some(dec!(190)),
+        None,
+        None,
+    )
+    .await?;
+    let alice = queries::users::create(&pool, "alice@example.com", "hash").await?;
+    let bob = queries::users::create(&pool, "bob@example.com", "hash").await?;
+
+    // Alice connected the same institution twice (the duplicate); Bob once.
+    let dup =
+        queries::plaid_items::upsert(&pool, alice.id, "item_dup", b"enc", Some("ins_1")).await?;
+    let keep =
+        queries::plaid_items::upsert(&pool, alice.id, "item_keep", b"enc", Some("ins_1")).await?;
+    let bob_item =
+        queries::plaid_items::upsert(&pool, bob.id, "item_bob", b"enc", Some("ins_1")).await?;
+
+    let dup_acct = queries::accounts::upsert(
+        &pool,
+        alice.id,
+        dup.id,
+        "acct_dup",
+        "Duplicate IRA",
+        None,
+        Some("investment"),
+        Some("ira"),
+    )
+    .await?;
+    let keep_acct = queries::accounts::upsert(
+        &pool,
+        alice.id,
+        keep.id,
+        "acct_keep",
+        "Brokerage",
+        None,
+        Some("investment"),
+        Some("brokerage"),
+    )
+    .await?;
+
+    // A lot under the duplicate connection's account — must cascade away.
+    queries::tax_lots::replace_for_user(
+        &pool,
+        alice.id,
+        &[db::queries::tax_lots::NewLot {
+            account_id: dup_acct,
+            security_id: sec,
+            open_date: date("2020-01-01"),
+            original_quantity: dec!(10),
+            remaining_quantity: dec!(10),
+            cost_basis_per_share: dec!(5),
+            source_transaction_id: None,
+        }],
+    )
+    .await?;
+
+    // Bob can't delete Alice's connection (user-scoped): no rows affected.
+    assert_eq!(
+        queries::plaid_items::delete(&pool, bob.id, dup.id).await?,
+        0
+    );
+    assert!(queries::plaid_items::find_by_id(&pool, alice.id, dup.id)
+        .await?
+        .is_some());
+
+    // Alice removes the duplicate.
+    assert_eq!(
+        queries::plaid_items::delete(&pool, alice.id, dup.id).await?,
+        1
+    );
+
+    // Its account and lot cascaded away; the other connection is untouched.
+    let accounts = queries::accounts::list(&pool, alice.id).await?;
+    assert_eq!(accounts.len(), 1);
+    assert_eq!(accounts[0].id, keep_acct);
+    assert!(queries::tax_lots::list_with_security(&pool, alice.id)
+        .await?
+        .is_empty());
+    assert!(queries::plaid_items::find_by_id(&pool, alice.id, dup.id)
+        .await?
+        .is_none());
+
+    // Bob's connection is entirely unaffected.
+    assert!(queries::plaid_items::find_by_id(&pool, bob.id, bob_item.id)
+        .await?
+        .is_some());
+    Ok(())
+}
