@@ -97,6 +97,34 @@ body {
 .card .card-head h2 { font-size: 14px; margin: 0; font-weight: 600; }
 .card .card-body { padding: 16px; }
 
+/* Collapsible account / year sections (Accounts page). Backgrounds are all
+   --surface so a full-radius header reads seamlessly with the body below. */
+.collapse-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  width: 100%; padding: 14px 16px; text-align: left;
+  background: var(--surface); border: none; border-radius: var(--radius);
+  cursor: pointer; font: inherit; color: inherit;
+}
+.collapse-head:hover { background: var(--surface-2); }
+.collapse-head.sub {
+  padding: 10px 12px; border-radius: var(--radius-sm); background: var(--surface-2);
+}
+.collapse-head.sub:hover { background: var(--border); }
+.collapse-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.collapse-title h2 { font-size: 14px; margin: 0; font-weight: 600; }
+.collapse-title h3 { font-size: 13px; margin: 0; font-weight: 600; }
+.collapse-summary {
+  display: flex; align-items: center; gap: 8px; white-space: nowrap;
+  font-size: 13px; font-variant-numeric: tabular-nums;
+}
+.collapse-body { padding: 0 16px 16px; }
+.chevron {
+  display: inline-block; width: 12px; text-align: center;
+  color: var(--text-faint); font-size: 10px;
+}
+.year-group { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 12px; }
+.year-group table { margin-top: 8px; }
+
 .grid { display: grid; gap: 16px; }
 .grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
 .grid.cols-4 { grid-template-columns: repeat(4, 1fr); }
