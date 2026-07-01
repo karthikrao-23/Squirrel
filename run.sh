@@ -37,6 +37,16 @@ case "$(uname -s)" in
     printf '%s   Continuing best-effort in this shell.%s\n' "$dim" "$rst" ;;
 esac
 
+# rustup installs cargo into ~/.cargo/bin but only wires it into *new* shells
+# (via your shell profile). Pull it onto PATH here so `./run.sh` finds a just-
+# installed Rust in the same terminal right after `./setup.sh` — no shell restart.
+if [[ -f "$HOME/.cargo/env" ]]; then
+  # shellcheck source=/dev/null
+  . "$HOME/.cargo/env"
+elif [[ -d "$HOME/.cargo/bin" ]]; then
+  PATH="$HOME/.cargo/bin:$PATH"
+fi
+
 # ---- 1. prerequisites -------------------------------------------------------
 log "Checking prerequisites"
 missing=0
