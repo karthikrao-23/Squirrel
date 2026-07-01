@@ -162,11 +162,17 @@ async fn remove_connection(
                 .ok()
                 .and_then(|b| String::from_utf8(b).ok())
             {
-                Some(token) => {
-                    if let Err(e) = state.plaid.remove_item(&token).await {
+                Some(token) => match state.plaid.remove_item(&token).await {
+                    Ok(resp) => {
+                        // Success is logged (with Plaid's request_id) so there's a
+                        // clean audit trail — hand the request_id to Plaid support
+                        // if a connection count ever looks off.
+                        tracing::info!(item = %item.id, request_id = %resp.request_id, "plaid item/remove ok");
+                    }
+                    Err(e) => {
                         tracing::warn!(error = %e, item = %item.id, "plaid item/remove failed; removing locally anyway");
                     }
-                }
+                },
                 None => {
                     tracing::warn!(item = %item.id, "could not decrypt access token; removing locally anyway");
                 }
