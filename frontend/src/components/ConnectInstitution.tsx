@@ -1,6 +1,4 @@
-import { useEffect, useState } from "react";
-import { usePlaidLink } from "react-plaid-link";
-import { useExchange, useLinkToken } from "../api/hooks";
+import { usePlaidConnect } from "../lib/plaidConnect";
 
 /**
  * Button that launches Plaid Link to connect **another** institution — a new
@@ -8,11 +6,10 @@ import { useExchange, useLinkToken } from "../api/hooks";
  * per user; `exchange` stores + syncs each). Reuses the same link-token/exchange
  * flow as onboarding, just reachable from the dashboard.
  *
- * The link token is fetched **lazily** (only after the user clicks, via the
- * `armed` flag) so we don't mint a Plaid token on every dashboard render; once
- * it's ready, Link opens automatically. On success the backend exchanges the
- * public token and runs the initial sync, then `useExchange` refreshes the
- * dashboard queries.
+ * The link token is fetched **lazily** (only after the user clicks) so we don't
+ * mint a Plaid token on every dashboard render; once ready, Link opens. OAuth
+ * banks (E*Trade, …) round-trip through the bank and back — `usePlaidConnect`
+ * persists the token and resumes Link on the redirect.
  */
 export function ConnectInstitutionButton({
   label = "+ Connect institution",
@@ -21,29 +18,7 @@ export function ConnectInstitutionButton({
   label?: string;
   className?: string;
 }) {
-  const [armed, setArmed] = useState(false);
-  const linkToken = useLinkToken(armed);
-  const exchange = useExchange();
-  const token = linkToken.data?.link_token ?? null;
-
-  const { open, ready } = usePlaidLink({
-    token,
-    onSuccess: (publicToken) => {
-      setArmed(false); // single-use token consumed; a fresh one is fetched next time
-      exchange.mutate(publicToken);
-    },
-    onExit: () => setArmed(false), // closed Link without finishing
-  });
-
-  // Open Link the moment the freshly-fetched token makes the handler ready. Keyed
-  // on `ready` only, so it fires exactly once per arm cycle (not on every render).
-  useEffect(() => {
-    if (ready) open();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready]);
-
-  const preparing = armed && !ready;
-  const error = (linkToken.error as Error | null) || (exchange.error as Error | null);
+  const { connect, preparing, isSyncing, error } = usePlaidConnect();
 
   return (
     <div className="flex" style={{ gap: 8 }}>
@@ -54,10 +29,10 @@ export function ConnectInstitutionButton({
       )}
       <button
         className={className}
-        disabled={preparing || exchange.isPending}
-        onClick={() => setArmed(true)}
+        disabled={preparing || isSyncing}
+        onClick={connect}
       >
-        {exchange.isPending ? "Syncing…" : preparing ? "Preparing…" : label}
+        {isSyncing ? "Syncing…" : preparing ? "Preparing…" : label}
       </button>
     </div>
   );

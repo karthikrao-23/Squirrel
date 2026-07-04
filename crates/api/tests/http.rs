@@ -29,6 +29,7 @@ fn test_config() -> api::config::Config {
         plaid_secret: String::new(),
         token_encryption_key: None,
         plaid_webhook_url: None,
+        plaid_redirect_uri: None,
         smtp: None,
         alert_cron: "0 0 * * * *".into(),
         alert_min_tax_saving: rust_decimal::Decimal::new(50, 0),

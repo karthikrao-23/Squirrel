@@ -20,6 +20,10 @@ struct LinkTokenCreateReq<'a> {
     products: [&'a str; 1],
     #[serde(skip_serializing_if = "Option::is_none")]
     webhook: Option<&'a str>,
+    /// Registered OAuth return URL. Required for OAuth institutions; omitted when
+    /// unset so non-OAuth linking is unaffected.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    redirect_uri: Option<&'a str>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -66,6 +70,7 @@ impl PlaidClient {
         &self,
         client_user_id: &str,
         webhook: Option<&str>,
+        redirect_uri: Option<&str>,
     ) -> Result<LinkTokenCreateResp, PlaidError> {
         self.post(
             "/link/token/create",
@@ -76,6 +81,7 @@ impl PlaidClient {
                 user: LinkUser { client_user_id },
                 products: ["investments"],
                 webhook,
+                redirect_uri,
             },
         )
         .await
@@ -117,5 +123,35 @@ impl PlaidClient {
             },
         )
         .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn req(webhook: Option<&'static str>, redirect_uri: Option<&'static str>) -> serde_json::Value {
+        serde_json::to_value(LinkTokenCreateReq {
+            client_name: "Squirrel",
+            language: "en",
+            country_codes: ["US"],
+            user: LinkUser { client_user_id: "u" },
+            products: ["investments"],
+            webhook,
+            redirect_uri,
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn redirect_uri_is_sent_only_when_set() {
+        // Present when configured — required for OAuth banks (E*Trade, …).
+        let with = req(None, Some("https://squirrel.example/"));
+        assert_eq!(with["redirect_uri"], "https://squirrel.example/");
+
+        // Omitted (not null) when unset, so non-OAuth linking is unaffected.
+        let without = req(None, None);
+        assert!(without.get("redirect_uri").is_none());
+        assert!(without.get("webhook").is_none());
     }
 }

@@ -53,6 +53,12 @@ pub struct Config {
     pub token_encryption_key: Option<[u8; 32]>,
     /// Public URL Plaid should POST webhooks to, if configured.
     pub plaid_webhook_url: Option<String>,
+    /// OAuth redirect URI for Plaid Link. Required for OAuth institutions (E*Trade,
+    /// Schwab, Chase, …): Plaid redirects the browser here after the bank's login,
+    /// so it must be one of the app's own URLs *and* registered in the Plaid
+    /// dashboard (Team Settings → API → Allowed redirect URIs). `None` disables
+    /// OAuth banks. Must have no query/fragment (e.g. `https://squirrel.example/`).
+    pub plaid_redirect_uri: Option<String>,
     /// SMTP settings for emailing alerts; `None` disables email (in-app only).
     pub smtp: Option<SmtpConfig>,
     /// Cron schedule for the alert job (6-field: sec min hour dom mon dow).
@@ -127,6 +133,7 @@ impl Config {
         let plaid_secret = std::env::var("PLAID_SECRET").unwrap_or_default();
         let token_encryption_key = parse_encryption_key()?;
         let plaid_webhook_url = non_empty(std::env::var("PLAID_WEBHOOK_URL").ok());
+        let plaid_redirect_uri = non_empty(std::env::var("PLAID_REDIRECT_URI").ok());
         let smtp = parse_smtp();
         let alert_cron = non_empty(std::env::var("ALERT_CRON").ok())
             .unwrap_or_else(|| "0 0 * * * *".to_string());
@@ -166,6 +173,7 @@ impl Config {
             plaid_secret,
             token_encryption_key,
             plaid_webhook_url,
+            plaid_redirect_uri,
             smtp,
             alert_cron,
             alert_min_tax_saving,
@@ -305,6 +313,7 @@ mod tests {
             plaid_env: PlaidEnv::Production,
             plaid_client_id: "id".into(),
             plaid_secret: "secret".into(),
+            plaid_redirect_uri: None,
             token_encryption_key: Some([0u8; 32]),
             plaid_webhook_url: None,
             smtp: None,

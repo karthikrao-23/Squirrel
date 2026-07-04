@@ -1,38 +1,22 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { usePlaidLink } from "react-plaid-link";
-import {
-  useAccounts,
-  useExchange,
-  useLinkToken,
-  useProfile,
-  useSandboxConnect,
-  useUpdateProfile,
-} from "../api/hooks";
+import { useAccounts, useProfile, useSandboxConnect, useUpdateProfile } from "../api/hooks";
+import { usePlaidConnect } from "../lib/plaidConnect";
 import { FILING_STATUS_LABELS, type FilingStatus } from "../api/types";
 
 const STATUSES = Object.keys(FILING_STATUS_LABELS) as FilingStatus[];
 
 /** Step 1 connect: real Plaid Link (primary) plus a dev-only sandbox shortcut. */
 function ConnectStep() {
-  // Fetch a Link token up front so the button is ready to open Plaid Link.
-  const linkToken = useLinkToken(true);
-  const exchange = useExchange();
-  const sandbox = useSandboxConnect();
-  const token = linkToken.data?.link_token ?? null;
-
-  const { open, ready } = usePlaidLink({
-    token,
-    // Plaid returns a short-lived public_token; the backend exchanges it, stores
-    // the item, and runs the initial sync inline (so success = portfolio ready).
-    onSuccess: (publicToken) => exchange.mutate(publicToken),
+  // Eager: fetch the token up front so the button opens Link on click. Handles
+  // the OAuth redirect round-trip (E*Trade etc.) and the exchange + initial sync.
+  const { open, ready, isSyncing, preparing, error: connectError } = usePlaidConnect({
+    eager: true,
   });
+  const sandbox = useSandboxConnect();
 
-  const syncing = exchange.isPending || sandbox.isPending;
-  const error =
-    (linkToken.error as Error | null) ||
-    (exchange.error as Error | null) ||
-    (sandbox.error as Error | null);
+  const syncing = isSyncing || sandbox.isPending;
+  const error = connectError || (sandbox.error as Error | null);
 
   return (
     <>
@@ -43,12 +27,12 @@ function ConnectStep() {
       <div className="flex">
         <button
           className="btn primary lg"
-          disabled={!ready || !token || syncing}
+          disabled={!ready || syncing}
           onClick={() => open()}
         >
-          {exchange.isPending
+          {isSyncing
             ? "Syncing your portfolio…"
-            : linkToken.isLoading
+            : preparing
               ? "Preparing…"
               : "Connect a brokerage"}
         </button>

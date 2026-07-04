@@ -62,6 +62,7 @@ async fn link_token(
         .create_link_token(
             &user.0.id.to_string(),
             state.config.plaid_webhook_url.as_deref(),
+            state.config.plaid_redirect_uri.as_deref(),
         )
         .await?;
     Ok(Json(json!({
