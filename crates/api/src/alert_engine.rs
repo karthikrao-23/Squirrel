@@ -124,6 +124,13 @@ pub async fn record_snapshot_for_user(state: &AppState, user: &User) -> anyhow::
     let mut retirement = (Decimal::ZERO, Decimal::ZERO);
     let mut taxable = (Decimal::ZERO, Decimal::ZERO);
     for lot in &lots {
+        let kind = AccountKind::resolve(
+            lot.account_subtype.as_deref(),
+            lot.account_kind_override.as_deref(),
+        );
+        if kind.is_debt() {
+            continue; // liabilities aren't part of portfolio value
+        }
         let cb = lot.remaining_quantity * lot.cost_basis_per_share;
         let mv = lot
             .close_price
@@ -131,12 +138,7 @@ pub async fn record_snapshot_for_user(state: &AppState, user: &User) -> anyhow::
             .unwrap_or(Decimal::ZERO);
         total.0 += mv;
         total.1 += cb;
-        let bucket = if AccountKind::resolve(
-            lot.account_subtype.as_deref(),
-            lot.account_kind_override.as_deref(),
-        )
-        .is_retirement()
-        {
+        let bucket = if kind.is_retirement() {
             &mut retirement
         } else {
             &mut taxable
@@ -146,11 +148,14 @@ pub async fn record_snapshot_for_user(state: &AppState, user: &User) -> anyhow::
     }
 
     // Accounts valued from Plaid's balance (no lots) add to market value only.
+    // Debt accounts are liabilities, so they're excluded.
     for a in db::queries::accounts::balance_only_accounts(&state.db, user.id).await? {
+        let kind = AccountKind::resolve(a.subtype.as_deref(), a.kind_override.as_deref());
+        if kind.is_debt() {
+            continue;
+        }
         total.0 += a.current_balance;
-        let bucket = if AccountKind::resolve(a.subtype.as_deref(), a.kind_override.as_deref())
-            .is_retirement()
-        {
+        let bucket = if kind.is_retirement() {
             &mut retirement
         } else {
             &mut taxable

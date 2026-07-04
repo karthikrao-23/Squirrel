@@ -1,17 +1,21 @@
-//! Account classification: taxable vs retirement.
+//! Account classification: taxable, retirement, or debt.
 //!
 //! Retirement accounts (IRA / Roth / 401k / …) are tax-advantaged, so the tax
 //! framing (harvesting, ST/LT, "tax if sold") doesn't apply — they get a
-//! performance view instead. By default we derive the kind from Plaid's account
-//! `subtype` ([`AccountKind::from_subtype`]), but a user can override a
-//! misclassified account; [`AccountKind::resolve`] applies that override on top
-//! of the derived default.
+//! performance view instead. **Debt** accounts (a loan, margin, or credit line)
+//! are liabilities: their balance is excluded from portfolio value and the
+//! investment views entirely. By default we derive the kind from Plaid's account
+//! `subtype` ([`AccountKind::from_subtype`], which only ever yields taxable or
+//! retirement); a user can override a misclassified account — including marking
+//! one as debt — and [`AccountKind::resolve`] applies that override on top.
 
-/// Whether an account is taxable or a tax-advantaged retirement account.
+/// How an account is treated: a taxable brokerage, a tax-advantaged retirement
+/// account, or a debt/liability excluded from portfolio value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AccountKind {
     Taxable,
     Retirement,
+    Debt,
 }
 
 /// Plaid investment `subtype` values that denote a retirement account. Matched
@@ -47,18 +51,20 @@ impl AccountKind {
     }
 
     /// Parse a stored override tag back into a kind. `Some("taxable")` /
-    /// `Some("retirement")` pin the kind; anything else (including `None`) means
-    /// "no override — classify automatically".
+    /// `Some("retirement")` / `Some("debt")` pin the kind; anything else
+    /// (including `None`) means "no override — classify automatically".
     pub fn from_override(over: Option<&str>) -> Option<Self> {
         match over {
             Some("taxable") => Some(AccountKind::Taxable),
             Some("retirement") => Some(AccountKind::Retirement),
+            Some("debt") => Some(AccountKind::Debt),
             _ => None,
         }
     }
 
     /// The effective kind for an account: an explicit user override wins;
-    /// otherwise fall back to deriving it from Plaid's `subtype`.
+    /// otherwise fall back to deriving it from Plaid's `subtype`. (`from_subtype`
+    /// never yields `Debt` — that's a deliberate manual mark only.)
     pub fn resolve(subtype: Option<&str>, over: Option<&str>) -> Self {
         Self::from_override(over).unwrap_or_else(|| Self::from_subtype(subtype))
     }
@@ -67,11 +73,17 @@ impl AccountKind {
         matches!(self, AccountKind::Retirement)
     }
 
+    /// A liability excluded from portfolio value and the investment views.
+    pub fn is_debt(self) -> bool {
+        matches!(self, AccountKind::Debt)
+    }
+
     /// Stable lowercase tag used in APIs / snapshot scope.
     pub fn as_str(self) -> &'static str {
         match self {
             AccountKind::Taxable => "taxable",
             AccountKind::Retirement => "retirement",
+            AccountKind::Debt => "debt",
         }
     }
 }
@@ -157,8 +169,22 @@ mod tests {
             AccountKind::from_override(Some("retirement")),
             Some(Retirement)
         );
+        assert_eq!(AccountKind::from_override(Some("debt")), Some(Debt));
         assert_eq!(AccountKind::from_override(Some("Retirement")), None); // exact tag only
         assert_eq!(AccountKind::from_override(None), None);
+    }
+
+    #[test]
+    fn debt_is_override_only_never_derived() {
+        // Marked debt regardless of subtype …
+        assert_eq!(AccountKind::resolve(Some("brokerage"), Some("debt")), Debt);
+        assert!(Debt.is_debt());
+        assert!(!Debt.is_retirement());
+        assert_eq!(Debt.as_str(), "debt");
+        // … but never derived from a subtype alone.
+        for s in ["loan", "mortgage", "credit card", "brokerage", "roth ira"] {
+            assert_ne!(AccountKind::from_subtype(Some(s)), Debt, "{s:?}");
+        }
     }
 
     #[test]

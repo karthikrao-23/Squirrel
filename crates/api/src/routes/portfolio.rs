@@ -166,10 +166,10 @@ async fn set_account_kind(
     // Only the two pinned kinds are valid; null means "clear". Reject anything
     // else up front so we never store a value the resolver would ignore.
     match req.kind.as_deref() {
-        None | Some("taxable") | Some("retirement") => {}
+        None | Some("taxable") | Some("retirement") | Some("debt") => {}
         Some(other) => {
             return Err(AppError::BadRequest(format!(
-                "kind must be \"taxable\", \"retirement\", or null; got {other:?}"
+                "kind must be \"taxable\", \"retirement\", \"debt\", or null; got {other:?}"
             )))
         }
     }

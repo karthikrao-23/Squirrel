@@ -93,9 +93,16 @@ async fn summary(
 
     // Fold in accounts valued from Plaid's balance (holdings unavailable, so no
     // lots). They add to market value only — we have no cost basis for them, so
-    // they don't affect unrealized gain/loss or the tax estimate.
+    // they don't affect unrealized gain/loss or the tax estimate. Debt accounts
+    // are liabilities, so their balance is excluded from portfolio value.
     for acct in db::queries::accounts::balance_only_accounts(&state.db, user.id).await? {
-        value += acct.current_balance;
+        let kind = domain::accounts::AccountKind::resolve(
+            acct.subtype.as_deref(),
+            acct.kind_override.as_deref(),
+        );
+        if !kind.is_debt() {
+            value += acct.current_balance;
+        }
     }
 
     let estimate = tax::estimate_liquidation(status, user.taxable_income, st, lt);
@@ -140,21 +147,20 @@ async fn harvest(
     let as_of = today();
     let lots = db::queries::tax_lots::list_open_with_price(&state.db, user.id).await?;
 
-    // Retirement accounts (IRA/401k/…) are tax-advantaged — harvesting there has
-    // no tax benefit, so their lots are never candidates.
-    let retirement: std::collections::HashSet<Uuid> =
-        db::queries::accounts::list(&state.db, user.id)
-            .await?
-            .into_iter()
-            .filter(|a| {
-                domain::accounts::AccountKind::resolve(
-                    a.subtype.as_deref(),
-                    a.kind_override.as_deref(),
-                )
-                .is_retirement()
-            })
-            .map(|a| a.id)
-            .collect();
+    // Retirement accounts (IRA/401k/…) are tax-advantaged and debt accounts are
+    // liabilities — neither harvests, so their lots are never candidates.
+    let excluded: std::collections::HashSet<Uuid> = db::queries::accounts::list(&state.db, user.id)
+        .await?
+        .into_iter()
+        .filter(|a| {
+            let kind = domain::accounts::AccountKind::resolve(
+                a.subtype.as_deref(),
+                a.kind_override.as_deref(),
+            );
+            kind.is_retirement() || kind.is_debt()
+        })
+        .map(|a| a.id)
+        .collect();
 
     let since = as_of - Duration::days(WASH_SALE_DAYS);
     let recent_buys: std::collections::HashSet<Uuid> =
@@ -165,8 +171,8 @@ async fn harvest(
 
     let mut candidates = Vec::new();
     for lot in &lots {
-        if retirement.contains(&lot.account_id) {
-            continue; // no harvesting in tax-advantaged accounts
+        if excluded.contains(&lot.account_id) {
+            continue; // no harvesting in retirement or debt accounts
         }
         let Some(price) = lot.close_price else {
             continue;
