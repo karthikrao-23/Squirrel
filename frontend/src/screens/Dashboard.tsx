@@ -20,9 +20,13 @@ import { Card, CardHead, Disclaimer, ErrorState, Money, Spinner, Stat } from "..
 import { fmtDate, money, num, qty } from "../lib/format";
 
 const DONUT_COLORS = ["#1f6feb", "#1a8a55", "#b7791f", "#8a93a1", "#7c5cff", "#0ea5a3"];
+// The investment kinds shown in the value split + allocation. Debt accounts are
+// liabilities, excluded from portfolio value, so they never appear here.
+type InvestKind = "taxable" | "retirement";
+const INVEST_KINDS: InvestKind[] = ["taxable", "retirement"];
 // Level-1 (by kind) colors: taxable = brand blue, retirement = violet.
-const KIND_COLORS: Record<AccountKind, string> = { taxable: "#1f6feb", retirement: "#7c5cff" };
-const KIND_LABEL: Record<AccountKind, string> = { taxable: "Taxable", retirement: "Retirement" };
+const KIND_COLORS: Record<InvestKind, string> = { taxable: "#1f6feb", retirement: "#7c5cff" };
+const KIND_LABEL: Record<InvestKind, string> = { taxable: "Taxable", retirement: "Retirement" };
 // Securities shown per drill tier before the rest fold into a clickable "Other".
 const SLICES_PER_TIER = 5;
 
@@ -97,7 +101,7 @@ export function Dashboard() {
   // Allocation drill state: null = top level (by kind), else a kind we've drilled
   // into. `drillOffset` pages through the securities within that kind — clicking
   // the "Other" slice advances it to reveal the next tier.
-  const [drill, setDrill] = useState<AccountKind | null>(null);
+  const [drill, setDrill] = useState<InvestKind | null>(null);
   const [drillOffset, setDrillOffset] = useState(0);
   const [sort, setSort] = useState<SortState>({ key: "value", dir: "desc" });
 
@@ -120,11 +124,14 @@ export function Dashboard() {
 
   const holdingKind = (h: Holding): AccountKind => kindByAccount.get(h.account_id) ?? "taxable";
 
-  // Value / cost-basis / unrealized split by account kind.
+  // Value / cost-basis / unrealized split by investment kind. Debt holdings
+  // (a liability) are excluded from portfolio value.
   const byKind = useMemo(() => {
-    const acc: Record<AccountKind, KindTotals> = { taxable: { ...ZERO }, retirement: { ...ZERO } };
+    const acc: Record<InvestKind, KindTotals> = { taxable: { ...ZERO }, retirement: { ...ZERO } };
     for (const h of holdings.data ?? []) {
-      const t = acc[holdingKind(h)];
+      const kind = holdingKind(h);
+      if (kind === "debt") continue;
+      const t = acc[kind];
       t.value += holdingValue(h);
       t.basis += num(h.cost_basis);
       t.unrealized += holdingGain(h);
@@ -136,9 +143,9 @@ export function Dashboard() {
   // Level 1 of the allocation chart: one slice per kind that holds value.
   const allocByKind = useMemo(
     () =>
-      (["taxable", "retirement"] as AccountKind[])
-        .map((kind) => ({ kind, name: KIND_LABEL[kind], value: byKind[kind].value }))
-        .filter((r) => r.value > 0),
+      INVEST_KINDS.map((kind) => ({ kind, name: KIND_LABEL[kind], value: byKind[kind].value })).filter(
+        (r) => r.value > 0,
+      ),
     [byKind],
   );
 

@@ -152,20 +152,28 @@ function Chevron({ open }: { open: boolean }) {
   );
 }
 
+const KIND_LABELS: Record<AccountKind, string> = {
+  taxable: "Taxable",
+  retirement: "Retirement",
+  debt: "Debt",
+};
+
 const KIND_OPTIONS: { value: AccountKindOverride; label: string }[] = [
   { value: null, label: "Auto" },
   { value: "taxable", label: "Taxable" },
   { value: "retirement", label: "Retirement" },
+  { value: "debt", label: "Debt" },
 ];
 
-/** Small header badge showing an account's effective tax classification. */
+/** Small header badge showing an account's effective classification. */
 function KindChip({ kind }: { kind: AccountKind }) {
-  return <span className={`chip ${kind}`}>{kind === "retirement" ? "Retirement" : "Taxable"}</span>;
+  return <span className={`chip ${kind}`}>{KIND_LABELS[kind]}</span>;
 }
 
-/** Segmented Auto / Taxable / Retirement control that overrides an account's tax
- *  classification. "Auto" (override = null) derives the kind from Plaid's
- *  subtype; the other two pin it. Used to fix a misclassified account. */
+/** Segmented Auto / Taxable / Retirement / Debt control that overrides an
+ *  account's classification. "Auto" (override = null) derives the kind from
+ *  Plaid's subtype; the others pin it. Debt marks a liability that's excluded
+ *  from portfolio value. */
 function KindControl({
   accountId,
   override,
@@ -181,9 +189,9 @@ function KindControl({
   return (
     <div className="kind-control">
       <span className="faint" style={{ fontSize: 12 }}>
-        Tax type
+        Account type
       </span>
-      <div className="segmented" role="group" aria-label="Account tax type">
+      <div className="segmented" role="group" aria-label="Account type">
         {KIND_OPTIONS.map((opt) => {
           const active = override === opt.value;
           return (
@@ -202,8 +210,10 @@ function KindControl({
       </div>
       <span className="faint" style={{ fontSize: 12 }}>
         {override === null
-          ? `Auto → ${resolvedKind === "retirement" ? "Retirement" : "Taxable"}`
-          : "Manually set"}
+          ? `Auto → ${KIND_LABELS[resolvedKind]}`
+          : resolvedKind === "debt"
+            ? "Manually set · excluded from portfolio value"
+            : "Manually set"}
       </span>
       {setKind.isError && (
         <span className="loss" style={{ fontSize: 12 }}>

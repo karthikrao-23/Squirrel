@@ -12,9 +12,10 @@ export type IsoDateTime = string; // RFC3339 (chrono DateTime<Utc>)
 
 export type Term = "short_term" | "long_term";
 
-// An account's tax classification. `AccountKindOverride` is the user's manual
+// An account's classification. `debt` is a liability (loan/margin/credit line)
+// excluded from portfolio value. `AccountKindOverride` is the user's manual
 // setting: null = classify automatically from the Plaid subtype ("Auto").
-export type AccountKind = "taxable" | "retirement";
+export type AccountKind = "taxable" | "retirement" | "debt";
 export type AccountKindOverride = AccountKind | null;
 
 export type FilingStatus =

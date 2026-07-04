@@ -833,6 +833,52 @@ async fn link_token_is_rejected_when_all_plaid_apps_are_full(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn debt_account_is_excluded_from_portfolio_value(pool: PgPool) {
+    let app = app(pool.clone());
+    let (cookie, user_id) = auth(&app, "debt@example.com").await;
+    // A balance-only account (Plaid balance, no lots) — e.g. a margin loan.
+    let item = db::queries::plaid_items::upsert(&pool, user_id, "item_debt", b"enc", None, "app1")
+        .await
+        .unwrap();
+    let acct = db::queries::accounts::upsert(
+        &pool,
+        user_id,
+        item.id,
+        "acct_loan",
+        "Margin Loan",
+        None,
+        Some("investment"),
+        Some("brokerage"),
+        Some(dec!(50000)),
+    )
+    .await
+    .unwrap();
+
+    // Auto-classified (taxable): its balance counts toward market value.
+    let before = get_auth(&app, "/api/tax/summary", &cookie).await;
+    assert_eq!(num(&before.body["total_market_value"]), 50000.0);
+
+    // Mark it debt → excluded from portfolio value.
+    let resp = send_auth(
+        &app,
+        "PATCH",
+        &format!("/api/accounts/{acct}/kind"),
+        &cookie,
+        json!({ "kind": "debt" }),
+    )
+    .await;
+    assert_eq!(resp.status, StatusCode::OK, "{:?}", resp.body);
+    assert_eq!(resp.body["kind"], "debt");
+
+    let after = get_auth(&app, "/api/tax/summary", &cookie).await;
+    assert_eq!(
+        num(&after.body["total_market_value"]),
+        0.0,
+        "a debt account's balance must not count toward portfolio value"
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn removing_a_connection_records_a_capacity_tombstone(pool: PgPool) {
     // Plaid unconfigured in the default test config, so remove skips the Plaid
     // call and goes straight to local delete + tombstone (no network).

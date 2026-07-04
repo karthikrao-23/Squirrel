@@ -167,6 +167,7 @@ body {
 .chip.warn { background: var(--warn-wash); color: var(--warn); }
 .chip.dot::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .chip.retirement { background: var(--brand-wash); color: var(--brand-ink); }
+.chip.debt { background: var(--loss-wash); color: var(--loss); }
 
 /* Segmented tax-type (Auto / Taxable / Retirement) control. */
 .kind-control { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
