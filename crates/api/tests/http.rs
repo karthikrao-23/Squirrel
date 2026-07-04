@@ -728,6 +728,72 @@ async fn tax_summary_reports_long_term_gain(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn account_kind_override_reclassifies_and_gates_harvest(pool: PgPool) {
+    let app = app(pool.clone());
+    let (cookie, user_id) = auth(&app, "kind@example.com").await;
+    db::queries::users::update_profile(&pool, user_id, "single", dec!(100000))
+        .await
+        .unwrap();
+    // A long-term loss lot in an account with no Plaid subtype → derived taxable,
+    // so its loss is a harvest candidate.
+    seed_lot(&pool, user_id, "LOSS", dec!(50), dec!(200), dec!(100)).await;
+
+    // Starts taxable, with no manual override.
+    let accts = get_auth(&app, "/api/accounts", &cookie).await;
+    let acct = accts.body["accounts"][0].clone();
+    assert_eq!(acct["kind"], "taxable");
+    assert!(acct["kind_override"].is_null());
+    let acct_id = acct["id"].as_str().unwrap().to_string();
+
+    // The loss lot is harvestable while the account is taxable.
+    let harvest = get_auth(&app, "/api/tax/harvest", &cookie).await;
+    assert_eq!(harvest.body["candidates"].as_array().unwrap().len(), 1);
+
+    // Mark the account as retirement.
+    let uri = format!("/api/accounts/{acct_id}/kind");
+    let resp = send_auth(
+        &app,
+        "PATCH",
+        &uri,
+        &cookie,
+        json!({ "kind": "retirement" }),
+    )
+    .await;
+    assert_eq!(resp.status, StatusCode::OK, "{:?}", resp.body);
+    assert_eq!(resp.body["kind"], "retirement");
+    assert_eq!(resp.body["kind_override"], "retirement");
+
+    // It now reads as retirement, and its lot is no longer harvestable.
+    let accts = get_auth(&app, "/api/accounts", &cookie).await;
+    assert_eq!(accts.body["accounts"][0]["kind"], "retirement");
+    assert_eq!(accts.body["accounts"][0]["kind_override"], "retirement");
+    let harvest = get_auth(&app, "/api/tax/harvest", &cookie).await;
+    assert!(harvest.body["candidates"].as_array().unwrap().is_empty());
+
+    // Clearing the override (kind: null) reverts to the derived taxable kind.
+    let resp = send_auth(&app, "PATCH", &uri, &cookie, json!({ "kind": null })).await;
+    assert_eq!(resp.status, StatusCode::OK);
+    assert_eq!(resp.body["kind"], "taxable");
+    assert!(resp.body["kind_override"].is_null());
+
+    // An unrecognized kind is rejected.
+    let resp = send_auth(&app, "PATCH", &uri, &cookie, json!({ "kind": "roth" })).await;
+    assert_eq!(resp.status, StatusCode::BAD_REQUEST);
+
+    // An account the user doesn't own is a 404, not a silent no-op.
+    let foreign = format!("/api/accounts/{}/kind", Uuid::new_v4());
+    let resp = send_auth(
+        &app,
+        "PATCH",
+        &foreign,
+        &cookie,
+        json!({ "kind": "retirement" }),
+    )
+    .await;
+    assert_eq!(resp.status, StatusCode::NOT_FOUND);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn alerts_evaluate_list_and_read(pool: PgPool) {
     let app = app(pool.clone());
     let (cookie, user_id) = auth(&app, "alert@example.com").await;

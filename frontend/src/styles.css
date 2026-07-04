@@ -165,6 +165,19 @@ body {
 .chip.loss { background: var(--loss-wash); color: var(--loss); }
 .chip.warn { background: var(--warn-wash); color: var(--warn); }
 .chip.dot::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.chip.retirement { background: var(--brand-wash); color: var(--brand-ink); }
+
+/* Segmented tax-type (Auto / Taxable / Retirement) control. */
+.kind-control { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.segmented { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.segmented .seg {
+  padding: 5px 12px; font-size: 12px; font-weight: 600; background: var(--surface);
+  border: 0; border-right: 1px solid var(--border); color: var(--text-faint); cursor: pointer;
+}
+.segmented .seg:last-child { border-right: 0; }
+.segmented .seg:hover:not(:disabled) { background: var(--surface-2); }
+.segmented .seg.active { background: var(--brand); color: #fff; cursor: default; }
+.segmented .seg:disabled:not(.active) { opacity: .5; cursor: not-allowed; }
 
 /* ---------- Tables ---------- */
 table { width: 100%; border-collapse: collapse; }

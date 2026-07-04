@@ -131,7 +131,12 @@ pub async fn record_snapshot_for_user(state: &AppState, user: &User) -> anyhow::
             .unwrap_or(Decimal::ZERO);
         total.0 += mv;
         total.1 += cb;
-        let bucket = if AccountKind::from_subtype(lot.account_subtype.as_deref()).is_retirement() {
+        let bucket = if AccountKind::resolve(
+            lot.account_subtype.as_deref(),
+            lot.account_kind_override.as_deref(),
+        )
+        .is_retirement()
+        {
             &mut retirement
         } else {
             &mut taxable
@@ -143,7 +148,9 @@ pub async fn record_snapshot_for_user(state: &AppState, user: &User) -> anyhow::
     // Accounts valued from Plaid's balance (no lots) add to market value only.
     for a in db::queries::accounts::balance_only_accounts(&state.db, user.id).await? {
         total.0 += a.current_balance;
-        let bucket = if AccountKind::from_subtype(a.subtype.as_deref()).is_retirement() {
+        let bucket = if AccountKind::resolve(a.subtype.as_deref(), a.kind_override.as_deref())
+            .is_retirement()
+        {
             &mut retirement
         } else {
             &mut taxable

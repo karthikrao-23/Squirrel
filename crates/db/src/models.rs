@@ -85,6 +85,9 @@ pub struct Account {
     pub subtype: Option<String>,
     /// Plaid's authoritative total dollar value for the account (balances.current).
     pub current_balance: Option<Decimal>,
+    /// User override of the tax classification: `"taxable"` / `"retirement"`, or
+    /// `None` to classify automatically from `subtype`. See `domain::AccountKind`.
+    pub kind_override: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

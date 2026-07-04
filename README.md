@@ -37,6 +37,22 @@ productizing it.
   - lots about to cross the **1-year long-term boundary** (selling now wastes the lower rate), and
   - **harvestable losses** worth realizing.
   Delivered **in-app** (badge + list) and by **email**.
+- **Per-account view** — holdings broken out by connected account, collapsible and
+  drilled down by tax-lot year, with per-account value / cost-basis / unrealized totals.
+- **Taxable vs retirement, done right** — accounts are classified from their Plaid
+  subtype (IRA / Roth / 401(k) / …). Retirement accounts are **excluded from harvesting
+  and the "tax if sold" math** (no tax benefit there) and get a **performance view**
+  instead. A misclassified account can be **manually overridden** (Auto / Taxable /
+  Retirement) and the correction flows through every view.
+- **Retirement performance** — for tax-advantaged accounts: value, total return ($/%),
+  money-weighted **IRR** and time-weighted **TWR**, plus a value-over-time chart.
+- **Portfolio value over time** — a daily snapshot job records total / taxable /
+  retirement value, backing the dashboard's performance chart.
+- **Connections manager** — see every Plaid link, spot accidental duplicates, and
+  **remove a connection** (disconnects it on Plaid's side and drops its accounts/lots).
+- **Holdings-unavailable accounts** — for institutions Plaid won't share positions for
+  (e.g. Fidelity BrokerageLink), the account value is **anchored to Plaid's balance**
+  rather than dropped.
 
 ---
 
@@ -64,13 +80,17 @@ shapes directly.
 
 ### Data model (Postgres)
 
-9 tables: `users`, `sessions`, `plaid_items`, `accounts`, `securities`,
-`holdings`, `transactions`, `tax_lots`, `alerts`. Two deliberate decisions:
+10 tables: `users`, `sessions`, `plaid_items`, `accounts`, `securities`,
+`holdings`, `transactions`, `tax_lots`, `alerts`, `portfolio_snapshots`. Three
+deliberate decisions:
 
 - **Every user-owned table carries `user_id`**, so the app is **multi-user**: each
   request is scoped to the authenticated user, and Plaid uniques are composite
   (`(user_id, plaid_*_id)`) so tenants can't collide.
 - **`tax_lots` are derived**, not from Plaid — reconstructed FIFO from transactions.
+- **Account tax classification is derived** from the Plaid subtype, never stored —
+  except an optional `accounts.kind_override` when the user corrects it. Daily
+  `portfolio_snapshots` are scoped (`total` / `taxable` / `retirement`) to chart each.
 
 ---
 
@@ -89,11 +109,17 @@ a CSRF header + Origin check. Every data route is scoped to the signed-in user.
 | | `POST /api/plaid/exchange` | swap `public_token`, store encrypted item, initial sync |
 | | `POST /api/plaid/sandbox/connect` | dev shortcut: mint + exchange + sync (sandbox) |
 | | `POST /api/plaid/webhook` | Plaid pushes holdings/transaction updates |
+| Connections | `GET /api/plaid/items` · `DELETE /api/plaid/items/:id` | list connections (+ duplicate detection) · remove one |
+| | `POST /api/plaid/resync` | re-pull holdings/transactions now |
 | Profile | `GET` / `PATCH /api/profile` | filing status + taxable income (drives the tax math) |
-| Portfolio | `GET /api/accounts` · `GET /api/holdings` · `GET /api/transactions` · `GET /api/lots` | read-only views |
+| Portfolio | `GET /api/accounts` · `GET /api/holdings` · `GET /api/transactions` · `GET /api/lots` | read-only views (accounts tagged taxable/retirement) |
+| | `GET /api/accounts/lots` | open lots grouped per account (+ balance-only accounts) |
+| | `PATCH /api/accounts/:id/kind` | override an account's tax classification (`taxable` / `retirement` / `null` = auto) |
 | | `POST /api/lots/rebuild` | re-run FIFO reconstruction |
+| | `GET /api/portfolio/history` | daily total-value snapshots (dashboard chart) |
+| Retirement | `GET /api/retirement` | performance view: value, total return, IRR, TWR, value history |
 | Tax | `GET /api/tax/summary` | unrealized gain + estimated federal/CA tax if sold now |
-| | `GET /api/tax/harvest` | loss candidates + wash-sale flags |
+| | `GET /api/tax/harvest` | loss candidates + wash-sale flags (retirement accounts excluded) |
 | | `POST /api/tax/simulate` | specific-lot sell → after-tax proceeds |
 | Alerts | `GET /api/alerts` · `POST /api/alerts/:id/read` | list + mark read |
 | | `POST /api/alerts/evaluate` | run the alert rules now (test hook) |
@@ -105,11 +131,17 @@ a CSRF header + Origin check. Every data route is scoped to the signed-in user.
 
 ## Frontend
 
-A single-page app that implements four screens, each backed by the endpoints above:
+A single-page app, each screen backed by the endpoints above:
 
 - **Onboarding** — connect a brokerage (Plaid) → sync → set filing status + income.
-- **Dashboard** — value/unrealized/ST-LT/estimated-tax tiles, holdings table, allocation donut.
-- **Harvest** — loss candidates (with wash-sale chips) → live sell simulator.
+- **Dashboard** — value/unrealized/ST-LT/estimated-tax tiles, value-over-time chart,
+  holdings table, allocation donut.
+- **Accounts** — holdings per connected account (collapsible, drilled down by lot year)
+  with a per-account **tax-type control** (Auto / Taxable / Retirement); plus the
+  **Connections** manager for removing links.
+- **Retirement** — performance view of tax-advantaged accounts: total return, IRR/TWR,
+  value chart.
+- **Harvest** — loss candidates (with wash-sale chips), search/sort/filter → live sell simulator.
 - **Alerts** — tax-timing & harvest signals, unread filter, mark-read.
 
 The design was prototyped first as HTML mocks (`design/` + `DESIGN.md`) on
@@ -216,11 +248,16 @@ bash -n setup.sh && bash -n run.sh   # shell scripts (also linted in CI on macOS
 | M8 | Productization: auth, multi-user, secrets, deploy | ✅ |
 
 **Done since:** real Plaid Link onboarding, DB-backed auth + per-user tenant
-isolation, Plaid webhook signature verification, and container + Cloud Run /
-Cloud SQL deploy scripts.
+isolation, Plaid webhook signature verification, container + Cloud Run / Cloud SQL
+deploy scripts, a per-account **Accounts** page + **Connections** manager, daily
+**portfolio value snapshots** with a dashboard performance chart, a **Retirement**
+performance view (total return + IRR/TWR), and **taxable/retirement classification**
+with a manual per-account override.
 
-**Known follow-ups:** a portfolio value-history endpoint to back the dashboard's
-performance chart, and realized-gains tracking (v1 reconstructs open lots only).
+**Known follow-ups:** realized-gains tracking (v1 reconstructs open lots only),
+cross-account wash-sale detection (a replacement buy in an IRA can disallow a loss
+in a taxable account — currently out of scope), and contribution/withdrawal
+classification to sharpen the retirement IRR/TWR figures.
 
 ---
 

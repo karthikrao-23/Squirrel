@@ -2,8 +2,10 @@
 //!
 //! Retirement accounts (IRA / Roth / 401k / …) are tax-advantaged, so the tax
 //! framing (harvesting, ST/LT, "tax if sold") doesn't apply — they get a
-//! performance view instead. We derive the kind from Plaid's account `subtype`;
-//! it's not stored, just computed.
+//! performance view instead. By default we derive the kind from Plaid's account
+//! `subtype` ([`AccountKind::from_subtype`]), but a user can override a
+//! misclassified account; [`AccountKind::resolve`] applies that override on top
+//! of the derived default.
 
 /// Whether an account is taxable or a tax-advantaged retirement account.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,6 +44,23 @@ impl AccountKind {
         } else {
             AccountKind::Taxable
         }
+    }
+
+    /// Parse a stored override tag back into a kind. `Some("taxable")` /
+    /// `Some("retirement")` pin the kind; anything else (including `None`) means
+    /// "no override — classify automatically".
+    pub fn from_override(over: Option<&str>) -> Option<Self> {
+        match over {
+            Some("taxable") => Some(AccountKind::Taxable),
+            Some("retirement") => Some(AccountKind::Retirement),
+            _ => None,
+        }
+    }
+
+    /// The effective kind for an account: an explicit user override wins;
+    /// otherwise fall back to deriving it from Plaid's `subtype`.
+    pub fn resolve(subtype: Option<&str>, over: Option<&str>) -> Self {
+        Self::from_override(over).unwrap_or_else(|| Self::from_subtype(subtype))
     }
 
     pub fn is_retirement(self) -> bool {
@@ -104,6 +123,42 @@ mod tests {
             );
         }
         assert_eq!(AccountKind::from_subtype(None), Taxable);
+    }
+
+    #[test]
+    fn override_wins_over_subtype() {
+        // A retirement subtype that the user forced back to taxable, and a
+        // taxable subtype the user promoted to retirement (the misclassified case).
+        assert_eq!(
+            AccountKind::resolve(Some("roth ira"), Some("taxable")),
+            Taxable
+        );
+        assert_eq!(
+            AccountKind::resolve(Some("brokerage"), Some("retirement")),
+            Retirement
+        );
+    }
+
+    #[test]
+    fn resolve_falls_back_to_subtype_without_override() {
+        // No override (None) or an unrecognized tag → derive from the subtype.
+        assert_eq!(AccountKind::resolve(Some("brokerage"), None), Taxable);
+        assert_eq!(AccountKind::resolve(Some("roth ira"), None), Retirement);
+        assert_eq!(
+            AccountKind::resolve(Some("brokerage"), Some("bogus")),
+            Taxable
+        );
+    }
+
+    #[test]
+    fn from_override_parses_known_tags_only() {
+        assert_eq!(AccountKind::from_override(Some("taxable")), Some(Taxable));
+        assert_eq!(
+            AccountKind::from_override(Some("retirement")),
+            Some(Retirement)
+        );
+        assert_eq!(AccountKind::from_override(Some("Retirement")), None); // exact tag only
+        assert_eq!(AccountKind::from_override(None), None);
     }
 
     #[test]

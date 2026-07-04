@@ -36,7 +36,12 @@ async fn summary(State(state): State<AppState>, user: AuthUser) -> Result<Json<V
     let mut total_cb = Decimal::ZERO;
 
     for lot in &lots {
-        if !AccountKind::from_subtype(lot.account_subtype.as_deref()).is_retirement() {
+        if !AccountKind::resolve(
+            lot.account_subtype.as_deref(),
+            lot.account_kind_override.as_deref(),
+        )
+        .is_retirement()
+        {
             continue;
         }
         let cb = lot.remaining_quantity * lot.cost_basis_per_share;
@@ -93,7 +98,9 @@ async fn summary(State(state): State<AppState>, user: AuthUser) -> Result<Json<V
     let balance_only: Vec<_> = db::queries::accounts::balance_only_accounts(&state.db, user.0.id)
         .await?
         .into_iter()
-        .filter(|a| AccountKind::from_subtype(a.subtype.as_deref()).is_retirement())
+        .filter(|a| {
+            AccountKind::resolve(a.subtype.as_deref(), a.kind_override.as_deref()).is_retirement()
+        })
         .collect();
     let balance_only_value: Decimal = balance_only.iter().map(|a| a.current_balance).sum();
 

@@ -121,9 +121,18 @@ async fn list_items(
                 .iter()
                 .filter(|a| a.plaid_item_id == it.id)
                 .map(|a| {
-                    let kind =
-                        domain::accounts::AccountKind::from_subtype(a.subtype.as_deref()).as_str();
-                    json!({ "id": a.id, "name": a.name, "subtype": a.subtype, "kind": kind })
+                    let kind = domain::accounts::AccountKind::resolve(
+                        a.subtype.as_deref(),
+                        a.kind_override.as_deref(),
+                    )
+                    .as_str();
+                    json!({
+                        "id": a.id,
+                        "name": a.name,
+                        "subtype": a.subtype,
+                        "kind": kind,
+                        "kind_override": a.kind_override,
+                    })
                 })
                 .collect();
             json!({

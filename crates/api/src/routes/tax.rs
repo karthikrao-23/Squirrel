@@ -147,7 +147,11 @@ async fn harvest(
             .await?
             .into_iter()
             .filter(|a| {
-                domain::accounts::AccountKind::from_subtype(a.subtype.as_deref()).is_retirement()
+                domain::accounts::AccountKind::resolve(
+                    a.subtype.as_deref(),
+                    a.kind_override.as_deref(),
+                )
+                .is_retirement()
             })
             .map(|a| a.id)
             .collect();
