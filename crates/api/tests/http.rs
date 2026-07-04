@@ -27,6 +27,8 @@ fn test_config() -> api::config::Config {
         plaid_env: plaid::PlaidEnv::Sandbox,
         plaid_client_id: String::new(),
         plaid_secret: String::new(),
+        plaid_extra_credentials: Vec::new(),
+        plaid_max_items_per_app: 10,
         token_encryption_key: None,
         plaid_webhook_url: None,
         smtp: None,
@@ -214,9 +216,10 @@ async fn seed_lot(
     basis: rust_decimal::Decimal,
     qty: rust_decimal::Decimal,
 ) -> Uuid {
-    let item = db::queries::plaid_items::upsert(pool, user_id, "item_seed", b"enc", None)
-        .await
-        .unwrap();
+    let item =
+        db::queries::plaid_items::upsert(pool, user_id, "item_seed", b"enc", None, "test_app")
+            .await
+            .unwrap();
     let acct = db::queries::accounts::upsert(
         pool,
         user_id,
@@ -794,6 +797,42 @@ async fn account_kind_override_reclassifies_and_gates_harvest(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn link_token_is_rejected_when_all_plaid_apps_are_full(pool: PgPool) {
+    // One configured app with a low per-app cap; fill it so a new connection has
+    // no app to land on. select_plaid_app returns before any Plaid call.
+    let mut cfg = test_config();
+    cfg.plaid_client_id = "app1".into();
+    cfg.plaid_secret = "secret1".into();
+    cfg.plaid_max_items_per_app = 2;
+    let app = app_with(pool.clone(), cfg);
+    let (cookie, user_id) = auth(&app, "capacity@example.com").await;
+
+    for i in 0..2 {
+        db::queries::plaid_items::upsert(
+            &pool,
+            user_id,
+            &format!("item_{i}"),
+            b"enc",
+            None,
+            "app1",
+        )
+        .await
+        .unwrap();
+    }
+
+    let resp = send_auth(&app, "POST", "/api/plaid/link-token", &cookie, json!({})).await;
+    assert_eq!(resp.status, StatusCode::BAD_REQUEST, "{:?}", resp.body);
+    assert!(
+        resp.body["error"]
+            .as_str()
+            .unwrap_or("")
+            .contains("capacity"),
+        "expected a capacity error, got {:?}",
+        resp.body
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn alerts_evaluate_list_and_read(pool: PgPool) {
     let app = app(pool.clone());
     let (cookie, user_id) = auth(&app, "alert@example.com").await;
@@ -906,10 +945,16 @@ async fn same_institution_two_users_keep_separate_rows(pool: PgPool) {
 
     // Same Plaid ids for both users.
     for uid in [a, b] {
-        let item =
-            db::queries::plaid_items::upsert(&pool, uid, "item_shared", b"enc", Some("ins_1"))
-                .await
-                .unwrap();
+        let item = db::queries::plaid_items::upsert(
+            &pool,
+            uid,
+            "item_shared",
+            b"enc",
+            Some("ins_1"),
+            "test_app",
+        )
+        .await
+        .unwrap();
         let acct = db::queries::accounts::upsert(
             &pool,
             uid,

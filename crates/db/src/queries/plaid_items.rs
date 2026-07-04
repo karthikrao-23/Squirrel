@@ -8,20 +8,23 @@ use crate::models::PlaidItem;
 
 /// Insert a freshly linked item, or update its token if the same Plaid item is
 /// re-linked. Returns the stored row (with our internal UUID).
+#[allow(clippy::too_many_arguments)]
 pub async fn upsert(
     pool: &PgPool,
     user_id: Uuid,
     plaid_item_id: &str,
     access_token_encrypted: &[u8],
     institution_id: Option<&str>,
+    plaid_client_id: &str,
 ) -> sqlx::Result<PlaidItem> {
     sqlx::query_as::<_, PlaidItem>(
         r#"
-        INSERT INTO plaid_items (user_id, plaid_item_id, access_token_encrypted, institution_id, status)
-        VALUES ($1, $2, $3, $4, 'active')
+        INSERT INTO plaid_items (user_id, plaid_item_id, access_token_encrypted, institution_id, plaid_client_id, status)
+        VALUES ($1, $2, $3, $4, $5, 'active')
         ON CONFLICT (user_id, plaid_item_id) DO UPDATE
         SET access_token_encrypted = EXCLUDED.access_token_encrypted,
             institution_id = COALESCE(EXCLUDED.institution_id, plaid_items.institution_id),
+            plaid_client_id = EXCLUDED.plaid_client_id,
             status = 'active',
             updated_at = now()
         RETURNING *
@@ -31,7 +34,25 @@ pub async fn upsert(
     .bind(plaid_item_id)
     .bind(access_token_encrypted)
     .bind(institution_id)
+    .bind(plaid_client_id)
     .fetch_one(pool)
+    .await
+}
+
+/// Count of **active** items per Plaid app (`plaid_client_id`), across all users
+/// — Plaid's live-item cap is per app, not per user. Legacy items have a NULL
+/// `plaid_client_id` (they belong to the primary app); that bucket is returned as
+/// `None`. Drives capacity-based routing of new connections.
+pub async fn active_counts_by_client(pool: &PgPool) -> sqlx::Result<Vec<(Option<String>, i64)>> {
+    sqlx::query_as::<_, (Option<String>, i64)>(
+        r#"
+        SELECT plaid_client_id, COUNT(*)
+        FROM plaid_items
+        WHERE status = 'active'
+        GROUP BY plaid_client_id
+        "#,
+    )
+    .fetch_all(pool)
     .await
 }
 

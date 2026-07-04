@@ -38,7 +38,8 @@ async fn update_profile_round_trips(pool: PgPool) -> sqlx::Result<()> {
 async fn holdings_upsert_is_idempotent_per_account_security(pool: PgPool) -> sqlx::Result<()> {
     let user = queries::users::ensure_default(&pool).await?;
     let item =
-        queries::plaid_items::upsert(&pool, user.id, "item_1", b"enc", Some("ins_1")).await?;
+        queries::plaid_items::upsert(&pool, user.id, "item_1", b"enc", Some("ins_1"), "test_app")
+            .await?;
     let acct = queries::accounts::upsert(
         &pool,
         user.id,
@@ -102,7 +103,8 @@ async fn holdings_upsert_is_idempotent_per_account_security(pool: PgPool) -> sql
 #[sqlx::test(migrations = "../../migrations")]
 async fn transaction_insert_ignores_duplicates(pool: PgPool) -> sqlx::Result<()> {
     let user = queries::users::ensure_default(&pool).await?;
-    let item = queries::plaid_items::upsert(&pool, user.id, "item_1", b"enc", None).await?;
+    let item =
+        queries::plaid_items::upsert(&pool, user.id, "item_1", b"enc", None, "test_app").await?;
     let acct = queries::accounts::upsert(
         &pool,
         user.id,
@@ -149,7 +151,8 @@ async fn transaction_insert_ignores_duplicates(pool: PgPool) -> sqlx::Result<()>
 #[sqlx::test(migrations = "../../migrations")]
 async fn tax_lots_replace_is_atomic_and_overwrites(pool: PgPool) -> sqlx::Result<()> {
     let user = queries::users::ensure_default(&pool).await?;
-    let item = queries::plaid_items::upsert(&pool, user.id, "item_1", b"enc", None).await?;
+    let item =
+        queries::plaid_items::upsert(&pool, user.id, "item_1", b"enc", None, "test_app").await?;
     let acct = queries::accounts::upsert(
         &pool,
         user.id,
@@ -225,8 +228,15 @@ async fn list_open_with_account_returns_account_info_scoped_by_user(
     let seed_lot = |user_id, acct_name: &'static str, subtype: Option<&'static str>| {
         let pool = pool.clone();
         async move {
-            let item =
-                queries::plaid_items::upsert(&pool, user_id, "item", b"enc", Some("ins_1")).await?;
+            let item = queries::plaid_items::upsert(
+                &pool,
+                user_id,
+                "item",
+                b"enc",
+                Some("ins_1"),
+                "test_app",
+            )
+            .await?;
             let acct = queries::accounts::upsert(
                 &pool,
                 user_id,
@@ -422,12 +432,27 @@ async fn delete_plaid_item_cascades_and_is_user_scoped(pool: PgPool) -> sqlx::Re
     let bob = queries::users::create(&pool, "bob@example.com", "hash").await?;
 
     // Alice connected the same institution twice (the duplicate); Bob once.
-    let dup =
-        queries::plaid_items::upsert(&pool, alice.id, "item_dup", b"enc", Some("ins_1")).await?;
-    let keep =
-        queries::plaid_items::upsert(&pool, alice.id, "item_keep", b"enc", Some("ins_1")).await?;
+    let dup = queries::plaid_items::upsert(
+        &pool,
+        alice.id,
+        "item_dup",
+        b"enc",
+        Some("ins_1"),
+        "test_app",
+    )
+    .await?;
+    let keep = queries::plaid_items::upsert(
+        &pool,
+        alice.id,
+        "item_keep",
+        b"enc",
+        Some("ins_1"),
+        "test_app",
+    )
+    .await?;
     let bob_item =
-        queries::plaid_items::upsert(&pool, bob.id, "item_bob", b"enc", Some("ins_1")).await?;
+        queries::plaid_items::upsert(&pool, bob.id, "item_bob", b"enc", Some("ins_1"), "test_app")
+            .await?;
 
     let dup_acct = queries::accounts::upsert(
         &pool,
@@ -520,7 +545,9 @@ async fn balance_only_accounts_are_those_with_balance_and_no_open_lots(
     )
     .await?;
     let user = queries::users::create(&pool, "u@example.com", "hash").await?;
-    let item = queries::plaid_items::upsert(&pool, user.id, "item", b"enc", Some("ins_1")).await?;
+    let item =
+        queries::plaid_items::upsert(&pool, user.id, "item", b"enc", Some("ins_1"), "test_app")
+            .await?;
 
     // A: has a balance AND an open lot → NOT balance-only (valued from lots).
     let a = queries::accounts::upsert(

@@ -11,6 +11,7 @@ pub mod crypto;
 pub mod email;
 pub mod error;
 pub mod lots;
+pub mod plaid_clients;
 pub mod routes;
 pub mod state;
 pub mod sync;

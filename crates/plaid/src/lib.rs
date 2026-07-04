@@ -122,6 +122,12 @@ impl PlaidClient {
         self.env
     }
 
+    /// The Plaid `client_id` these credentials belong to. Used to tag items with
+    /// the app that created them so later calls reuse the matching credentials.
+    pub fn client_id(&self) -> &str {
+        &self.client_id
+    }
+
     /// True when no credentials are configured — handlers use this to return a
     /// clear error instead of a confusing 400 from Plaid.
     pub fn is_configured(&self) -> bool {

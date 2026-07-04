@@ -18,6 +18,7 @@ use crate::auth::AuthUser;
 use crate::error::AppError;
 use crate::state::AppState;
 use crate::sync::{self, SyncSummary};
+use plaid::PlaidClient;
 use uuid::Uuid;
 
 /// Default sandbox institution that supports the Investments product.
@@ -57,8 +58,10 @@ async fn link_token(
     user: AuthUser,
 ) -> Result<Json<Value>, AppError> {
     require_plaid(&state)?;
-    let resp = state
-        .plaid
+    // Mint the token on an app that has room, so the connection it creates lands
+    // on an app below Plaid's per-app item cap.
+    let client = select_plaid_app(&state).await?;
+    let resp = client
         .create_link_token(
             &user.0.id.to_string(),
             state.config.plaid_webhook_url.as_deref(),
@@ -68,6 +71,31 @@ async fn link_token(
         "link_token": resp.link_token,
         "expiration": resp.expiration,
     })))
+}
+
+/// Pick a configured Plaid app with capacity for one more connection. Apps are
+/// tried in priority order (primary first); legacy items (NULL `plaid_client_id`)
+/// count toward the primary. Errors if every app is at the per-app item cap.
+async fn select_plaid_app(state: &AppState) -> Result<&PlaidClient, AppError> {
+    let limit = state.config.plaid_max_items_per_app;
+    let counts = db::queries::plaid_items::active_counts_by_client(&state.db).await?;
+    let primary_id = state.plaid.primary().client_id();
+    for client in state.plaid.configured() {
+        let cid = client.client_id();
+        let is_primary = cid == primary_id;
+        let used: i64 = counts
+            .iter()
+            .filter(|(k, _)| k.as_deref() == Some(cid) || (is_primary && k.is_none()))
+            .map(|(_, n)| *n)
+            .sum();
+        if used < limit {
+            return Ok(client);
+        }
+    }
+    Err(AppError::BadRequest(format!(
+        "all Plaid apps are at capacity ({limit} connections each). \
+         Add another app with PLAID_CLIENT_ID_N / PLAID_SECRET_N."
+    )))
 }
 
 /// `POST /api/plaid/exchange`
@@ -91,7 +119,8 @@ async fn resync(State(state): State<AppState>, user: AuthUser) -> Result<Json<Va
     let mut holdings = 0;
     let mut transactions = 0;
     for item in &items {
-        let s = sync::sync_item(&state.db, &state.plaid, &key, item).await?;
+        let client = state.plaid.for_item(item.plaid_client_id.as_deref());
+        let s = sync::sync_item(&state.db, client, &key, item).await?;
         accounts += s.accounts;
         holdings += s.holdings;
         transactions += s.transactions_inserted;
@@ -171,7 +200,12 @@ async fn remove_connection(
                 .ok()
                 .and_then(|b| String::from_utf8(b).ok())
             {
-                Some(token) => match state.plaid.remove_item(&token).await {
+                Some(token) => match state
+                    .plaid
+                    .for_item(item.plaid_client_id.as_deref())
+                    .remove_item(&token)
+                    .await
+                {
                     Ok(resp) => {
                         // Success is logged (with Plaid's request_id) so there's a
                         // clean audit trail — hand the request_id to Plaid support
@@ -211,8 +245,10 @@ async fn sandbox_connect(
     let institution = body
         .and_then(|b| b.0.institution_id)
         .unwrap_or_else(|| SANDBOX_INSTITUTION.to_string());
+    // Sandbox testing always uses the primary app.
     let minted = state
         .plaid
+        .primary()
         .sandbox_public_token_create(&institution)
         .await?;
     let resp = connect_with_public_token(&state, user.0.id, &minted.public_token).await?;
@@ -275,13 +311,37 @@ async fn connect_with_public_token(
     require_plaid(state)?;
     let key = require_key(state)?;
 
-    let exchanged = state.plaid.exchange_public_token(public_token).await?;
-    let encrypted = crate::crypto::encrypt(&key, exchanged.access_token.as_bytes())?;
-    let item =
-        db::queries::plaid_items::upsert(&state.db, user_id, &exchanged.item_id, &encrypted, None)
-            .await?;
+    // A public_token is only valid for the app whose link token minted it, so try
+    // each configured app until one exchanges successfully — that's the app this
+    // connection belongs to, and every later call for it reuses those creds.
+    let mut result = None;
+    let mut last_err = None;
+    for client in state.plaid.configured() {
+        match client.exchange_public_token(public_token).await {
+            Ok(exchanged) => {
+                result = Some((client, exchanged));
+                break;
+            }
+            Err(e) => last_err = Some(e),
+        }
+    }
+    let (client, exchanged) = match result {
+        Some(pair) => pair,
+        None => return Err(last_err.map(AppError::from).unwrap_or(AppError::NotFound)),
+    };
 
-    let summary = sync::sync_item(&state.db, &state.plaid, &key, &item).await?;
+    let encrypted = crate::crypto::encrypt(&key, exchanged.access_token.as_bytes())?;
+    let item = db::queries::plaid_items::upsert(
+        &state.db,
+        user_id,
+        &exchanged.item_id,
+        &encrypted,
+        None,
+        client.client_id(),
+    )
+    .await?;
+
+    let summary = sync::sync_item(&state.db, client, &key, &item).await?;
     Ok(ConnectResponse {
         item_id: exchanged.item_id,
         summary,
@@ -303,7 +363,8 @@ async fn resync_item(state: &AppState, plaid_item_id: &str) -> anyhow::Result<()
         return Ok(());
     }
     for item in &items {
-        sync::sync_item(&state.db, &state.plaid, &key, item).await?;
+        let client = state.plaid.for_item(item.plaid_client_id.as_deref());
+        sync::sync_item(&state.db, client, &key, item).await?;
     }
     Ok(())
 }
