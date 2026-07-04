@@ -178,7 +178,8 @@ pub async fn run_cycle_for_user(state: &AppState, user: &User) -> anyhow::Result
         if let Some(key) = state.config.token_encryption_key {
             let items = db::queries::plaid_items::list_for_user(&state.db, user.id).await?;
             for item in &items {
-                match crate::sync::sync_item(&state.db, &state.plaid, &key, item).await {
+                let client = state.plaid.for_item(item.plaid_client_id.as_deref());
+                match crate::sync::sync_item(&state.db, client, &key, item).await {
                     Ok(_) => summary.items_synced += 1,
                     Err(e) => {
                         tracing::error!(error = %e, item = %item.plaid_item_id, "scheduled sync failed")

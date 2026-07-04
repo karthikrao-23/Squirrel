@@ -8,20 +8,23 @@ use crate::models::PlaidItem;
 
 /// Insert a freshly linked item, or update its token if the same Plaid item is
 /// re-linked. Returns the stored row (with our internal UUID).
+#[allow(clippy::too_many_arguments)]
 pub async fn upsert(
     pool: &PgPool,
     user_id: Uuid,
     plaid_item_id: &str,
     access_token_encrypted: &[u8],
     institution_id: Option<&str>,
+    plaid_client_id: &str,
 ) -> sqlx::Result<PlaidItem> {
     sqlx::query_as::<_, PlaidItem>(
         r#"
-        INSERT INTO plaid_items (user_id, plaid_item_id, access_token_encrypted, institution_id, status)
-        VALUES ($1, $2, $3, $4, 'active')
+        INSERT INTO plaid_items (user_id, plaid_item_id, access_token_encrypted, institution_id, plaid_client_id, status)
+        VALUES ($1, $2, $3, $4, $5, 'active')
         ON CONFLICT (user_id, plaid_item_id) DO UPDATE
         SET access_token_encrypted = EXCLUDED.access_token_encrypted,
             institution_id = COALESCE(EXCLUDED.institution_id, plaid_items.institution_id),
+            plaid_client_id = EXCLUDED.plaid_client_id,
             status = 'active',
             updated_at = now()
         RETURNING *
@@ -31,8 +34,58 @@ pub async fn upsert(
     .bind(plaid_item_id)
     .bind(access_token_encrypted)
     .bind(institution_id)
+    .bind(plaid_client_id)
     .fetch_one(pool)
     .await
+}
+
+/// Consumed connections per Plaid app (`plaid_client_id`), across all users —
+/// Plaid's live-item cap is per app, not per user. Counts **active items plus
+/// removed tombstones**, because Plaid does not free a slot when an Item is
+/// removed (see `plaid_removed_items`). Legacy active items have a NULL
+/// `plaid_client_id` (they belong to the primary app); that bucket is `None`.
+/// Drives capacity-based routing of new connections.
+pub async fn connection_counts_by_client(
+    pool: &PgPool,
+) -> sqlx::Result<Vec<(Option<String>, i64)>> {
+    sqlx::query_as::<_, (Option<String>, i64)>(
+        r#"
+        SELECT plaid_client_id, COUNT(*)
+        FROM (
+            SELECT plaid_client_id FROM plaid_items WHERE status = 'active'
+            UNION ALL
+            SELECT plaid_client_id FROM plaid_removed_items
+        ) consumed
+        GROUP BY plaid_client_id
+        "#,
+    )
+    .fetch_all(pool)
+    .await
+}
+
+/// Record that a connection was removed, so it keeps counting toward its app's
+/// capacity (Plaid doesn't free the slot). Called after the item's rows are
+/// deleted; stores only the app + audit fields, no financial data.
+pub async fn record_removed(
+    pool: &PgPool,
+    user_id: Uuid,
+    plaid_client_id: &str,
+    plaid_item_id: &str,
+    institution_name: Option<&str>,
+) -> sqlx::Result<()> {
+    sqlx::query(
+        r#"
+        INSERT INTO plaid_removed_items (user_id, plaid_client_id, plaid_item_id, institution_name)
+        VALUES ($1, $2, $3, $4)
+        "#,
+    )
+    .bind(user_id)
+    .bind(plaid_client_id)
+    .bind(plaid_item_id)
+    .bind(institution_name)
+    .execute(pool)
+    .await?;
+    Ok(())
 }
 
 /// Look up every item with this Plaid item id (used when a webhook arrives).

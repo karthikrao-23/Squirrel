@@ -21,7 +21,8 @@ use std::time::{Duration, Instant};
 
 use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, Validation};
 use plaid::webhooks::PlaidWebhook;
-use plaid::PlaidClient;
+
+use crate::plaid_clients::PlaidClients;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
@@ -80,7 +81,7 @@ impl WebhookVerifier {
     /// Verify the header+body and, on success, return the parsed webhook.
     pub async fn verify_and_parse(
         &self,
-        plaid: &PlaidClient,
+        clients: &PlaidClients,
         verification_header: Option<&str>,
         body: &[u8],
     ) -> Result<PlaidWebhook, WebhookError> {
@@ -95,7 +96,7 @@ impl WebhookVerifier {
         let kid = header.kid.ok_or(WebhookError::MissingKid)?;
 
         // 2 + 3. Resolve the key and verify the signature.
-        let (x, y) = self.resolve_key(plaid, &kid).await?;
+        let (x, y) = self.resolve_key(clients, &kid).await?;
         let decoding_key =
             DecodingKey::from_ec_components(&x, &y).map_err(|_| WebhookError::InvalidSignature)?;
         let mut validation = Validation::new(Algorithm::ES256);
@@ -126,7 +127,7 @@ impl WebhookVerifier {
     /// fetching from Plaid and caching. Honors rotation via the TTL.
     async fn resolve_key(
         &self,
-        plaid: &PlaidClient,
+        clients: &PlaidClients,
         kid: &str,
     ) -> Result<(String, String), WebhookError> {
         if let Some(key) = self.cache.read().expect("cache lock").get(kid) {
@@ -135,23 +136,35 @@ impl WebhookVerifier {
             }
         }
 
-        let key = plaid
-            .get_webhook_verification_key(kid)
-            .await
-            .map_err(|e| WebhookError::KeyFetch(e.to_string()))?;
-        if key.alg != "ES256" || key.kty != "EC" {
-            return Err(WebhookError::BadAlgorithm);
+        // A `kid` belongs to exactly one Plaid app, and its key is only fetchable
+        // with that app's credentials — so try each configured app until one
+        // returns it. (The webhook's item_id isn't trustworthy pre-verification,
+        // so we can't use it to pick the app up front.)
+        let mut last_err = None;
+        for plaid in clients.configured() {
+            match plaid.get_webhook_verification_key(kid).await {
+                Ok(key) => {
+                    if key.alg != "ES256" || key.kty != "EC" {
+                        return Err(WebhookError::BadAlgorithm);
+                    }
+                    self.cache.write().expect("cache lock").insert(
+                        kid.to_string(),
+                        CachedKey {
+                            x: key.x.clone(),
+                            y: key.y.clone(),
+                            fetched_at: Instant::now(),
+                        },
+                    );
+                    return Ok((key.x, key.y));
+                }
+                Err(e) => last_err = Some(e),
+            }
         }
-
-        self.cache.write().expect("cache lock").insert(
-            kid.to_string(),
-            CachedKey {
-                x: key.x.clone(),
-                y: key.y.clone(),
-                fetched_at: Instant::now(),
-            },
-        );
-        Ok((key.x, key.y))
+        Err(WebhookError::KeyFetch(
+            last_err
+                .map(|e| e.to_string())
+                .unwrap_or_else(|| "no configured Plaid app".to_string()),
+        ))
     }
 
     #[cfg(test)]
@@ -195,9 +208,9 @@ rERZvSSkFz5oDAtkOlVoZ7oFsjRa76zziHU9yuoO1QeS7IkL+0EclvG6\n\
     const BODY: &[u8] =
         br#"{"webhook_type":"HOLDINGS","webhook_code":"DEFAULT_UPDATE","item_id":"item_1"}"#;
 
-    fn dummy_plaid() -> PlaidClient {
-        // Never actually called: the test seeds the key cache, so no fetch occurs.
-        PlaidClient::new(plaid::PlaidEnv::Sandbox, String::new(), String::new())
+    fn dummy_clients() -> PlaidClients {
+        // Never actually fetched: the tests seed the key cache, so no HTTP occurs.
+        PlaidClients::new(plaid::PlaidEnv::Sandbox, &[])
     }
 
     fn verifier() -> WebhookVerifier {
@@ -228,7 +241,7 @@ rERZvSSkFz5oDAtkOlVoZ7oFsjRa76zziHU9yuoO1QeS7IkL+0EclvG6\n\
     async fn valid_webhook_verifies() {
         let jwt = sign(BODY, now(), Algorithm::ES256, Some(TEST_KID));
         let hook = verifier()
-            .verify_and_parse(&dummy_plaid(), Some(&jwt), BODY)
+            .verify_and_parse(&dummy_clients(), Some(&jwt), BODY)
             .await
             .unwrap();
         assert_eq!(hook.item_id, "item_1");
@@ -238,7 +251,7 @@ rERZvSSkFz5oDAtkOlVoZ7oFsjRa76zziHU9yuoO1QeS7IkL+0EclvG6\n\
     #[tokio::test]
     async fn missing_header_is_rejected() {
         let err = verifier()
-            .verify_and_parse(&dummy_plaid(), None, BODY)
+            .verify_and_parse(&dummy_clients(), None, BODY)
             .await
             .unwrap_err();
         assert!(matches!(err, WebhookError::MissingHeader));
@@ -249,7 +262,7 @@ rERZvSSkFz5oDAtkOlVoZ7oFsjRa76zziHU9yuoO1QeS7IkL+0EclvG6\n\
         // alg-confusion: an attacker signs HS256 with the (public) key material.
         let jwt = sign(BODY, now(), Algorithm::HS256, Some(TEST_KID));
         let err = verifier()
-            .verify_and_parse(&dummy_plaid(), Some(&jwt), BODY)
+            .verify_and_parse(&dummy_clients(), Some(&jwt), BODY)
             .await
             .unwrap_err();
         assert!(matches!(err, WebhookError::BadAlgorithm));
@@ -262,7 +275,7 @@ rERZvSSkFz5oDAtkOlVoZ7oFsjRa76zziHU9yuoO1QeS7IkL+0EclvG6\n\
         let tampered =
             br#"{"webhook_type":"HOLDINGS","webhook_code":"DEFAULT_UPDATE","item_id":"EVIL"}"#;
         let err = verifier()
-            .verify_and_parse(&dummy_plaid(), Some(&jwt), tampered)
+            .verify_and_parse(&dummy_clients(), Some(&jwt), tampered)
             .await
             .unwrap_err();
         assert!(matches!(err, WebhookError::BodyHashMismatch));
@@ -272,7 +285,7 @@ rERZvSSkFz5oDAtkOlVoZ7oFsjRa76zziHU9yuoO1QeS7IkL+0EclvG6\n\
     async fn stale_iat_is_rejected() {
         let jwt = sign(BODY, now() - 3600, Algorithm::ES256, Some(TEST_KID));
         let err = verifier()
-            .verify_and_parse(&dummy_plaid(), Some(&jwt), BODY)
+            .verify_and_parse(&dummy_clients(), Some(&jwt), BODY)
             .await
             .unwrap_err();
         assert!(matches!(err, WebhookError::Stale));
@@ -286,7 +299,7 @@ rERZvSSkFz5oDAtkOlVoZ7oFsjRa76zziHU9yuoO1QeS7IkL+0EclvG6\n\
         // Seed "other-kid" with a mismatched public key (swap x/y).
         v.insert_key_for_test("other-kid", TEST_Y, TEST_X);
         let err = v
-            .verify_and_parse(&dummy_plaid(), Some(&jwt), BODY)
+            .verify_and_parse(&dummy_clients(), Some(&jwt), BODY)
             .await
             .unwrap_err();
         assert!(matches!(err, WebhookError::InvalidSignature));

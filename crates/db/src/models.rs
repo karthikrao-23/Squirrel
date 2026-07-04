@@ -68,6 +68,9 @@ pub struct PlaidItem {
     pub institution_id: Option<String>,
     pub institution_name: Option<String>,
     pub transactions_cursor: Option<String>,
+    /// The Plaid app (`client_id`) that created this item. NULL for legacy items
+    /// (they belong to the primary app). See `PlaidClients::for_item`.
+    pub plaid_client_id: Option<String>,
     pub status: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,

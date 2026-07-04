@@ -46,8 +46,16 @@ pub struct Config {
     /// Cloud Run injects `PORT`; when set it wins over `bind_addr`.
     pub port: Option<u16>,
     pub plaid_env: PlaidEnv,
+    /// Primary Plaid app credentials (app #1). `client_id`/`secret`.
     pub plaid_client_id: String,
     pub plaid_secret: String,
+    /// Additional Plaid apps beyond the primary, from `PLAID_CLIENT_ID_2` /
+    /// `PLAID_SECRET_2`, `_3`, … New connections shard across all configured apps
+    /// once earlier ones hit Plaid's per-app live-item limit.
+    pub plaid_extra_credentials: Vec<(String, String)>,
+    /// Max live Plaid items per app before a new connection routes to the next
+    /// app. Mirrors Plaid's per-app Item cap. `PLAID_MAX_ITEMS_PER_APP`, default 10.
+    pub plaid_max_items_per_app: i64,
     /// 32-byte AES key for encrypting Plaid access tokens. Optional so the
     /// server still boots without it (M1); M2 handlers error clearly if unset.
     pub token_encryption_key: Option<[u8; 32]>,
@@ -125,6 +133,11 @@ impl Config {
         // M2 endpoints will error clearly if they're unset.
         let plaid_client_id = std::env::var("PLAID_CLIENT_ID").unwrap_or_default();
         let plaid_secret = std::env::var("PLAID_SECRET").unwrap_or_default();
+        let plaid_extra_credentials = parse_plaid_extra_credentials();
+        let plaid_max_items_per_app = non_empty(std::env::var("PLAID_MAX_ITEMS_PER_APP").ok())
+            .and_then(|s| s.parse().ok())
+            .filter(|n| *n > 0)
+            .unwrap_or(10);
         let token_encryption_key = parse_encryption_key()?;
         let plaid_webhook_url = non_empty(std::env::var("PLAID_WEBHOOK_URL").ok());
         let smtp = parse_smtp();
@@ -164,6 +177,8 @@ impl Config {
             plaid_env,
             plaid_client_id,
             plaid_secret,
+            plaid_extra_credentials,
+            plaid_max_items_per_app,
             token_encryption_key,
             plaid_webhook_url,
             smtp,
@@ -222,6 +237,41 @@ impl Config {
         }
         Ok(())
     }
+
+    /// All configured Plaid apps in priority order: primary (app #1) first, then
+    /// the numbered extras. Feeds the [`PlaidClients`] registry.
+    ///
+    /// [`PlaidClients`]: crate::plaid_clients::PlaidClients
+    pub fn plaid_credentials(&self) -> Vec<(String, String)> {
+        let mut creds = vec![(self.plaid_client_id.clone(), self.plaid_secret.clone())];
+        creds.extend(self.plaid_extra_credentials.iter().cloned());
+        creds
+    }
+}
+
+/// Read additional Plaid apps from `PLAID_CLIENT_ID_2`/`PLAID_SECRET_2`, `_3`, …
+/// Indices are contiguous from 2: scanning stops at the first index with neither
+/// var set (or one only half-set, which is logged and ignored).
+fn parse_plaid_extra_credentials() -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let mut i = 2;
+    loop {
+        let id = non_empty(std::env::var(format!("PLAID_CLIENT_ID_{i}")).ok());
+        let secret = non_empty(std::env::var(format!("PLAID_SECRET_{i}")).ok());
+        match (id, secret) {
+            (Some(id), Some(secret)) => out.push((id, secret)),
+            (None, None) => break,
+            _ => {
+                tracing::warn!(
+                    index = i,
+                    "PLAID_CLIENT_ID_{i}/PLAID_SECRET_{i} is only half-set; ignoring this app and stopping the scan"
+                );
+                break;
+            }
+        }
+        i += 1;
+    }
+    out
 }
 
 /// Parse a permissive boolean (`true/false/1/0/yes/no/on/off`).
@@ -305,6 +355,8 @@ mod tests {
             plaid_env: PlaidEnv::Production,
             plaid_client_id: "id".into(),
             plaid_secret: "secret".into(),
+            plaid_extra_credentials: Vec::new(),
+            plaid_max_items_per_app: 10,
             token_encryption_key: Some([0u8; 32]),
             plaid_webhook_url: None,
             smtp: None,

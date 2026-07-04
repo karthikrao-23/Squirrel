@@ -5,16 +5,18 @@
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
-use plaid::PlaidClient;
 use sqlx::PgPool;
 
 use crate::config::Config;
+use crate::plaid_clients::PlaidClients;
 use crate::webhook_verify::WebhookVerifier;
 
 #[derive(Clone)]
 pub struct AppState {
     pub db: PgPool,
-    pub plaid: PlaidClient,
+    /// The configured Plaid apps. New connections shard across them by capacity;
+    /// each item is served by the app that created it.
+    pub plaid: PlaidClients,
     pub config: Config,
     /// A real argon2 hash of a throwaway password, built once at startup. The
     /// login path verifies against it when the email is unknown so that
@@ -29,11 +31,7 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(db: PgPool, config: Config) -> Self {
-        let plaid = PlaidClient::new(
-            config.plaid_env,
-            config.plaid_client_id.clone(),
-            config.plaid_secret.clone(),
-        );
+        let plaid = PlaidClients::new(config.plaid_env, &config.plaid_credentials());
         let dummy_password_hash = Arc::from(crate::auth::password::dummy_hash());
         Self {
             db,
