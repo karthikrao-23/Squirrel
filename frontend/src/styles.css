@@ -140,6 +140,7 @@ body {
 .btn.danger:hover { background: var(--loss-wash); }
 
 .grid { display: grid; gap: 16px; }
+.grid.cols-2 { grid-template-columns: repeat(2, 1fr); }
 .grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
 .grid.cols-4 { grid-template-columns: repeat(4, 1fr); }
 .grid.dash { grid-template-columns: 2fr 1fr; align-items: start; }
@@ -190,6 +191,17 @@ tbody td { padding: 11px 12px; border-bottom: 1px solid var(--border); }
 tbody tr:last-child td { border-bottom: none; }
 tbody tr:hover { background: #fafbfc; }
 td.r, th.r { text-align: right; }
+
+/* Clickable, sortable column headers. The button inherits the th's uppercase
+   caption styling so it reads as a header, not a control. */
+.th-sort {
+  appearance: none; background: none; border: 0; padding: 0; font: inherit;
+  text-transform: inherit; letter-spacing: inherit; font-size: inherit; font-weight: inherit;
+  color: inherit; cursor: pointer; display: inline-flex; align-items: center; gap: 4px;
+}
+.th-sort:hover { color: var(--text); }
+.sort-caret { font-size: 9px; opacity: .55; }
+.th-sort:hover .sort-caret { opacity: .9; }
 .tick { font-weight: 700; }
 .tick .name { display: block; font-weight: 400; color: var(--text-faint); font-size: 12px; }
 
@@ -262,6 +274,13 @@ hr.sep { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
 .legend { display: flex; flex-direction: column; gap: 8px; }
 .legend .row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .legend .sw { width: 10px; height: 10px; border-radius: 3px; }
+.legend .row.clickable {
+  appearance: none; background: none; border: 0; font: inherit; color: inherit;
+  width: 100%; text-align: left; padding: 5px 7px; margin: -5px -7px;
+  border-radius: var(--radius-sm); cursor: pointer;
+}
+.legend .row.clickable:hover { background: var(--surface-2); }
+.legend .drill-caret { color: var(--text-faint); font-size: 16px; line-height: 1; }
 
 /* Alerts */
 .alert-item { display: flex; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--border); }
