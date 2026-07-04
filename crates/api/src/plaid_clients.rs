@@ -68,6 +68,12 @@ impl PlaidClients {
     pub fn configured(&self) -> impl Iterator<Item = &PlaidClient> {
         self.clients.iter().filter(|c| c.is_configured())
     }
+
+    /// The `client_id`s of the configured apps (not secret). For startup logging /
+    /// operator visibility into how many apps were picked up.
+    pub fn client_ids(&self) -> Vec<&str> {
+        self.configured().map(|c| c.client_id()).collect()
+    }
 }
 
 #[cfg(test)]
