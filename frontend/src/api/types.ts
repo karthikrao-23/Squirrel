@@ -50,6 +50,9 @@ export interface Account {
   official_name: string | null;
   type: string | null;
   subtype: string | null;
+  current_balance: Dec | null;
+  kind: AccountKind; // resolved (subtype + any override)
+  kind_override: AccountKindOverride;
   created_at: IsoDateTime;
   updated_at: IsoDateTime;
 }
