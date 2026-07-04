@@ -1,6 +1,16 @@
 import { useMemo, useState } from "react";
-import { useAccountLots, useConnections, useRemoveConnection } from "../api/hooks";
-import type { AccountBalanceOnly, AccountLot } from "../api/types";
+import {
+  useAccountLots,
+  useConnections,
+  useRemoveConnection,
+  useSetAccountKind,
+} from "../api/hooks";
+import type {
+  AccountBalanceOnly,
+  AccountKind,
+  AccountKindOverride,
+  AccountLot,
+} from "../api/types";
 import {
   Card,
   CardHead,
@@ -40,6 +50,8 @@ interface AccountGroup {
   account_id: string;
   account_name: string;
   account_subtype: string | null;
+  account_kind: AccountKind;
+  account_kind_override: AccountKindOverride;
   years: YearGroup[];
   totalMarketValue: number;
   totalCostBasis: number;
@@ -60,6 +72,8 @@ function groupByAccount(lots: AccountLot[]): AccountGroup[] {
         account_id: lot.account_id,
         account_name: lot.account_name,
         account_subtype: lot.account_subtype,
+        account_kind: lot.account_kind,
+        account_kind_override: lot.account_kind_override,
         years: [],
         totalMarketValue: 0,
         totalCostBasis: 0,
@@ -138,6 +152,68 @@ function Chevron({ open }: { open: boolean }) {
   );
 }
 
+const KIND_OPTIONS: { value: AccountKindOverride; label: string }[] = [
+  { value: null, label: "Auto" },
+  { value: "taxable", label: "Taxable" },
+  { value: "retirement", label: "Retirement" },
+];
+
+/** Small header badge showing an account's effective tax classification. */
+function KindChip({ kind }: { kind: AccountKind }) {
+  return <span className={`chip ${kind}`}>{kind === "retirement" ? "Retirement" : "Taxable"}</span>;
+}
+
+/** Segmented Auto / Taxable / Retirement control that overrides an account's tax
+ *  classification. "Auto" (override = null) derives the kind from Plaid's
+ *  subtype; the other two pin it. Used to fix a misclassified account. */
+function KindControl({
+  accountId,
+  override,
+  resolvedKind,
+}: {
+  accountId: string;
+  override: AccountKindOverride;
+  resolvedKind: AccountKind;
+}) {
+  const setKind = useSetAccountKind();
+  const busy = setKind.isPending && setKind.variables?.id === accountId;
+
+  return (
+    <div className="kind-control">
+      <span className="faint" style={{ fontSize: 12 }}>
+        Tax type
+      </span>
+      <div className="segmented" role="group" aria-label="Account tax type">
+        {KIND_OPTIONS.map((opt) => {
+          const active = override === opt.value;
+          return (
+            <button
+              key={opt.label}
+              type="button"
+              className={`seg ${active ? "active" : ""}`}
+              aria-pressed={active}
+              disabled={busy || active}
+              onClick={() => setKind.mutate({ id: accountId, kind: opt.value })}
+            >
+              {opt.label}
+            </button>
+          );
+        })}
+      </div>
+      <span className="faint" style={{ fontSize: 12 }}>
+        {override === null
+          ? `Auto → ${resolvedKind === "retirement" ? "Retirement" : "Taxable"}`
+          : "Manually set"}
+      </span>
+      {setKind.isError && (
+        <span className="loss" style={{ fontSize: 12 }}>
+          {(setKind.error as Error).message}
+        </span>
+      )}
+    </div>
+  );
+}
+
 function AccountCard({ group }: { group: AccountGroup }) {
   const [open, setOpen] = useState(false);
   const [openYears, setOpenYears] = useState<Set<string>>(new Set());
@@ -161,6 +237,7 @@ function AccountCard({ group }: { group: AccountGroup }) {
           <Chevron open={open} />
           <h2>{group.account_name}</h2>
           {group.account_subtype && <span className="chip">{group.account_subtype}</span>}
+          <KindChip kind={group.account_kind} />
         </div>
         <div className="collapse-summary">
           <span className="muted">{money(group.totalMarketValue)}</span>
@@ -173,6 +250,13 @@ function AccountCard({ group }: { group: AccountGroup }) {
 
       {open && (
         <div className="collapse-body">
+          <div className="mt16" style={{ marginBottom: 8 }}>
+            <KindControl
+              accountId={group.account_id}
+              override={group.account_kind_override}
+              resolvedKind={group.account_kind}
+            />
+          </div>
           <div className="grid cols-3">
             <Stat label="Market value" value={money(group.totalMarketValue)} />
             <Stat label="Cost basis" value={money(group.totalCostBasis)} />
@@ -294,16 +378,22 @@ function BalanceOnlyCard({ account }: { account: AccountBalanceOnly }) {
         <div className="collapse-title">
           <h2>{account.name}</h2>
           {account.subtype && <span className="chip">{account.subtype}</span>}
+          <KindChip kind={account.kind} />
         </div>
         <div className="collapse-summary">
           <span className="num">{money(account.current_balance)}</span>
         </div>
       </div>
       <div className="card-body">
-        <p className="faint" style={{ margin: 0, fontSize: 13 }}>
+        <p className="faint" style={{ margin: "0 0 12px", fontSize: 13 }}>
           Value from Plaid's account balance. This institution doesn't share per-position holdings,
           so lot-level detail (cost basis, gains, harvesting) isn't available for this account.
         </p>
+        <KindControl
+          accountId={account.account_id}
+          override={account.kind_override}
+          resolvedKind={account.kind}
+        />
       </div>
     </Card>
   );

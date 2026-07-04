@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { del, get, patch, post } from "./client";
 import type {
   Account,
+  AccountKindOverride,
   AccountLotsResp,
   Alert,
   Connection,
@@ -121,6 +122,32 @@ export const useAccountLots = () =>
     queryKey: keys.accountLots,
     queryFn: () => get<AccountLotsResp>("/api/accounts/lots"),
   });
+
+/** Override an account's tax classification (or clear it back to auto with
+ *  `kind: null`). The kind gates harvest candidates, the retirement view, and
+ *  the dashboard's taxable/retirement split, so refresh all of them. */
+export function useSetAccountKind() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, kind }: { id: string; kind: AccountKindOverride }) =>
+      patch<{ account_id: string; kind: string; kind_override: AccountKindOverride }>(
+        `/api/accounts/${id}/kind`,
+        { kind },
+      ),
+    onSuccess: () => {
+      for (const key of [
+        keys.accountLots,
+        keys.accounts,
+        keys.connections,
+        keys.summary,
+        keys.harvest,
+        keys.retirement,
+      ]) {
+        qc.invalidateQueries({ queryKey: key });
+      }
+    },
+  });
+}
 
 export const useHoldings = () =>
   useQuery({

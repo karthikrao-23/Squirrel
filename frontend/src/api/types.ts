@@ -12,6 +12,11 @@ export type IsoDateTime = string; // RFC3339 (chrono DateTime<Utc>)
 
 export type Term = "short_term" | "long_term";
 
+// An account's tax classification. `AccountKindOverride` is the user's manual
+// setting: null = classify automatically from the Plaid subtype ("Auto").
+export type AccountKind = "taxable" | "retirement";
+export type AccountKindOverride = AccountKind | null;
+
 export type FilingStatus =
   | "single"
   | "married_filing_jointly"
@@ -55,7 +60,8 @@ export interface ConnectionAccount {
   id: Uuid;
   name: string;
   subtype: string | null;
-  kind: "taxable" | "retirement";
+  kind: AccountKind;
+  kind_override: AccountKindOverride;
 }
 export interface Connection {
   id: Uuid;
@@ -86,6 +92,8 @@ export interface AccountLot {
   account_id: Uuid;
   account_name: string;
   account_subtype: string | null;
+  account_kind: AccountKind; // effective kind after any override
+  account_kind_override: AccountKindOverride; // user's manual setting, or null
   security_id: Uuid;
   ticker: string | null;
   open_date: IsoDate;
@@ -101,7 +109,8 @@ export interface AccountBalanceOnly {
   account_id: Uuid;
   name: string;
   subtype: string | null;
-  kind: "taxable" | "retirement";
+  kind: AccountKind;
+  kind_override: AccountKindOverride;
   current_balance: Dec;
 }
 

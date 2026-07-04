@@ -118,6 +118,7 @@ pub struct LotByAccount {
     pub account_id: Uuid,
     pub account_name: String,
     pub account_subtype: Option<String>,
+    pub account_kind_override: Option<String>,
     pub security_id: Uuid,
     pub ticker: Option<String>,
     pub open_date: NaiveDate,
@@ -137,6 +138,7 @@ pub async fn list_open_with_account(
     sqlx::query_as::<_, LotByAccount>(
         r#"
         SELECT l.id, l.account_id, a.name AS account_name, a.subtype AS account_subtype,
+               a.kind_override AS account_kind_override,
                l.security_id, s.ticker, l.open_date,
                l.remaining_quantity, l.cost_basis_per_share,
                COALESCE(h.institution_price, s.close_price) AS close_price
