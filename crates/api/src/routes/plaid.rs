@@ -78,7 +78,7 @@ async fn link_token(
 /// count toward the primary. Errors if every app is at the per-app item cap.
 async fn select_plaid_app(state: &AppState) -> Result<&PlaidClient, AppError> {
     let limit = state.config.plaid_max_items_per_app;
-    let counts = db::queries::plaid_items::active_counts_by_client(&state.db).await?;
+    let counts = db::queries::plaid_items::connection_counts_by_client(&state.db).await?;
     let primary_id = state.plaid.primary().client_id();
     for client in state.plaid.configured() {
         let cid = client.client_id();
@@ -224,6 +224,28 @@ async fn remove_connection(
     }
 
     let removed = db::queries::plaid_items::delete(&state.db, user.0.id, id).await? > 0;
+
+    // Plaid doesn't free the app's connection slot on removal, so tombstone it —
+    // otherwise this app would appear to regain capacity it doesn't have. Record
+    // against the app that owned the item (the primary for legacy NULLs).
+    if removed {
+        let client_id = item
+            .plaid_client_id
+            .clone()
+            .unwrap_or_else(|| state.plaid.primary().client_id().to_string());
+        if let Err(e) = db::queries::plaid_items::record_removed(
+            &state.db,
+            user.0.id,
+            &client_id,
+            &item.plaid_item_id,
+            item.institution_name.as_deref(),
+        )
+        .await
+        {
+            tracing::error!(error = %e, item = %id, "failed to record removed-connection tombstone");
+        }
+    }
+
     tracing::info!(user = %user.0.id, item = %id, removed, "connection removed");
     Ok(Json(json!({ "removed": removed })))
 }

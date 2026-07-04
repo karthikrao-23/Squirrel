@@ -833,6 +833,67 @@ async fn link_token_is_rejected_when_all_plaid_apps_are_full(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn removing_a_connection_records_a_capacity_tombstone(pool: PgPool) {
+    // Plaid unconfigured in the default test config, so remove skips the Plaid
+    // call and goes straight to local delete + tombstone (no network).
+    let app = app(pool.clone());
+    let (cookie, user_id) = auth(&app, "remove@example.com").await;
+    let item = db::queries::plaid_items::upsert(&pool, user_id, "item_x", b"enc", None, "app1")
+        .await
+        .unwrap();
+
+    let resp = send_auth(
+        &app,
+        "DELETE",
+        &format!("/api/plaid/items/{}", item.id),
+        &cookie,
+        json!({}),
+    )
+    .await;
+    assert_eq!(resp.status, StatusCode::OK, "{:?}", resp.body);
+    assert_eq!(resp.body["removed"], true);
+
+    // The item row is gone, but a tombstone keeps its Plaid slot counted.
+    let counts = db::queries::plaid_items::connection_counts_by_client(&pool)
+        .await
+        .unwrap();
+    let app1: i64 = counts
+        .iter()
+        .filter(|(c, _)| c.as_deref() == Some("app1"))
+        .map(|(_, n)| *n)
+        .sum();
+    assert_eq!(
+        app1, 1,
+        "removed connection should still count; got {counts:?}"
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn removed_connections_count_toward_capacity(pool: PgPool) {
+    let mut cfg = test_config();
+    cfg.plaid_client_id = "app1".into();
+    cfg.plaid_secret = "secret1".into();
+    cfg.plaid_max_items_per_app = 2;
+    let app = app_with(pool.clone(), cfg);
+    let (cookie, user_id) = auth(&app, "tombstone@example.com").await;
+
+    // 1 active item + 1 removed tombstone = 2 consumed = at the cap of 2.
+    db::queries::plaid_items::upsert(&pool, user_id, "item_active", b"enc", None, "app1")
+        .await
+        .unwrap();
+    db::queries::plaid_items::record_removed(&pool, user_id, "app1", "item_gone", Some("E*Trade"))
+        .await
+        .unwrap();
+
+    let resp = send_auth(&app, "POST", "/api/plaid/link-token", &cookie, json!({})).await;
+    assert_eq!(resp.status, StatusCode::BAD_REQUEST, "{:?}", resp.body);
+    assert!(resp.body["error"]
+        .as_str()
+        .unwrap_or("")
+        .contains("capacity"));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn alerts_evaluate_list_and_read(pool: PgPool) {
     let app = app(pool.clone());
     let (cookie, user_id) = auth(&app, "alert@example.com").await;
