@@ -32,6 +32,13 @@ pub struct AppState {
 impl AppState {
     pub fn new(db: PgPool, config: Config) -> Self {
         let plaid = PlaidClients::new(config.plaid_env, &config.plaid_credentials());
+        // Log how many Plaid apps were picked up (client_ids only, never secrets),
+        // so a mis-keyed/half-set app is obvious at boot instead of silently skipped.
+        tracing::info!(
+            plaid_apps = plaid.client_ids().len(),
+            client_ids = ?plaid.client_ids(),
+            "Plaid apps configured"
+        );
         let dummy_password_hash = Arc::from(crate::auth::password::dummy_hash());
         Self {
             db,
