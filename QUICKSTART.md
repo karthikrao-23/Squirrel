@@ -52,6 +52,11 @@ When it's up, open **<http://localhost:5173>**, **sign up**, then connect a brok
 Stop everything with **Ctrl-C**. Postgres keeps running in the background; stop it
 with `docker compose down`.
 
+> **All settings live in `.env`** (created for you on first run). See
+> [`.env.example`](.env.example) for the full annotated list — Plaid keys and
+> multi-app sharding, SMTP for email alerts, the Plaid webhook URL, and alert
+> tuning (`ALERT_CRON`, `ALERT_MIN_SAVING`, `ALERT_APPROACHING_WINDOW_DAYS`).
+
 ## 3. Connecting a brokerage (Plaid)
 
 Squirrel imports holdings and transactions through [Plaid](https://plaid.com).
@@ -98,6 +103,34 @@ add them.
 Once holdings import, Squirrel evaluates **tax-aware alerts** right away — connecting
 or re-syncing a brokerage refreshes them, and the **Alerts** screen has a **Refresh**
 button to re-run them on demand (a scheduled cycle also runs them in the background).
+
+### Connecting many accounts (multiple Plaid apps)
+
+Plaid caps the number of live connections ("Items") **per app** — 10 on a starter
+account. To grow past that, Squirrel shards connections across **multiple Plaid apps**:
+each new connection is routed to the first app that still has room.
+
+Add extra apps by creating additional Plaid accounts (each on the **same `PLAID_ENV`**)
+and listing their keys, **numbered contiguously from `2`**:
+
+```bash
+PLAID_CLIENT_ID=your_client_id            # primary app (app #1), always tried first
+PLAID_SECRET=your_secret
+PLAID_CLIENT_ID_2=second_app_client_id    # app #2
+PLAID_SECRET_2=second_app_secret
+PLAID_CLIENT_ID_3=third_app_client_id     # app #3, and so on
+PLAID_SECRET_3=third_app_secret
+```
+
+- The scan stops at the first missing number, so keep them contiguous (`_2`, `_3`, …);
+  a half-set pair (id without secret) is ignored and stops the scan.
+- `PLAID_MAX_ITEMS_PER_APP` (default **10**) sets the per-app cap before a new
+  connection routes to the next app.
+- When every app is at capacity, minting a link token fails with a clear error —
+  add another app to grow further.
+
+A single app is plenty for local use; you only need this once you're connecting more
+accounts than one Plaid app allows.
 
 ## Useful commands
 

@@ -52,6 +52,9 @@ productizing it.
   retirement value, backing the dashboard's performance chart.
 - **Connections manager** — see every Plaid link, spot accidental duplicates, and
   **remove a connection** (disconnects it on Plaid's side and drops its accounts/lots).
+- **Multi-app Plaid sharding** — Plaid caps live connections per app (~10 on a starter
+  account), so Squirrel routes each new connection to the first configured app with room.
+  Add capacity with numbered `PLAID_CLIENT_ID_2` / `PLAID_SECRET_2`, `_3`, … credentials.
 - **Holdings-unavailable accounts** — for institutions Plaid won't share positions for
   (e.g. Fidelity BrokerageLink), the account value is **anchored to Plaid's balance**
   rather than dropped.
@@ -202,6 +205,10 @@ with **Ctrl-C** (Postgres keeps running; `docker compose down` stops it).
   **production** with a Plaid trial to connect a real brokerage. Your `client_id` is
   the same in both; the **secret differs per environment** and must match `PLAID_ENV`.
   See [`QUICKSTART.md`](QUICKSTART.md#3-connecting-a-brokerage-plaid) for the details.
+  Need more than the ~10 connections a single Plaid app allows? Add extra apps as
+  `PLAID_CLIENT_ID_2` / `PLAID_SECRET_2`, `_3`, … (same `PLAID_ENV`) and Squirrel
+  shards connections across them — see
+  [Connecting many accounts](QUICKSTART.md#connecting-many-accounts-multiple-plaid-apps).
 - *(optional)* SMTP creds (e.g. [Mailtrap](https://mailtrap.io)) to actually send alert emails
 
 ### Manual setup
