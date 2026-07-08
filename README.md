@@ -33,10 +33,12 @@ productizing it.
 - **Tax-loss harvesting** — surfaces lots trading below cost, flags **wash-sale risk**
   (same security bought within ±30 days), and runs a **specific-lot sell simulator**
   showing after-tax proceeds.
-- **Tax-aware sell alerts** (the headline feature) — a nightly job watches for:
+- **Tax-aware sell alerts** (the headline feature) — watches for:
   - lots about to cross the **1-year long-term boundary** (selling now wastes the lower rate), and
   - **harvestable losses** worth realizing.
-  Delivered **in-app** (badge + list) and by **email**.
+  Re-evaluated on every data sync (connecting or re-syncing a brokerage) and on demand
+  from the Alerts screen's **Refresh** button, on top of a scheduled cycle. Delivered
+  **in-app** (badge + list) and by **email**.
 - **Per-account view** — holdings broken out by connected account, collapsible and
   drilled down by tax-lot year, with per-account value / cost-basis / unrealized totals.
 - **Taxable vs retirement, done right** — accounts are classified from their Plaid
@@ -122,7 +124,7 @@ a CSRF header + Origin check. Every data route is scoped to the signed-in user.
 | | `GET /api/tax/harvest` | loss candidates + wash-sale flags (retirement accounts excluded) |
 | | `POST /api/tax/simulate` | specific-lot sell → after-tax proceeds |
 | Alerts | `GET /api/alerts` · `POST /api/alerts/:id/read` | list + mark read |
-| | `POST /api/alerts/evaluate` | run the alert rules now (test hook) |
+| | `POST /api/alerts/evaluate` | run the alert rules now (Alerts screen's **Refresh** button; also runs automatically after a sync) |
 
 > **Money values** are `rust_decimal::Decimal` serialized **as strings** (the
 > `serde-with-str` feature) to avoid float precision loss — clients parse them.
@@ -142,7 +144,8 @@ A single-page app, each screen backed by the endpoints above:
 - **Retirement** — performance view of tax-advantaged accounts: total return, IRR/TWR,
   value chart.
 - **Harvest** — loss candidates (with wash-sale chips), search/sort/filter → live sell simulator.
-- **Alerts** — tax-timing & harvest signals, unread filter, mark-read.
+- **Alerts** — tax-timing & harvest signals, unread filter, mark-read, and a **Refresh**
+  button to re-evaluate on demand (they also refresh automatically after a sync).
 
 The design was prototyped first as HTML mocks (`design/` + `DESIGN.md`) on
 [Claude Design](https://claude.ai/design), then built in React. The design tokens in

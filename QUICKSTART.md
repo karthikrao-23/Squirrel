@@ -95,6 +95,10 @@ switching *Plaid*, not the app's security posture.
 The app runs fine without Plaid keys — you just can't import a portfolio until you
 add them.
 
+Once holdings import, Squirrel evaluates **tax-aware alerts** right away — connecting
+or re-syncing a brokerage refreshes them, and the **Alerts** screen has a **Refresh**
+button to re-run them on demand (a scheduled cycle also runs them in the background).
+
 ## Useful commands
 
 ```bash
