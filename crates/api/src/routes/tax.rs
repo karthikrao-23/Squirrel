@@ -62,7 +62,8 @@ async fn summary(
 ) -> Result<Json<TaxSummary>, AppError> {
     let user = auth.0;
     let status = parse_status(&user.filing_status);
-    let lots = db::queries::tax_lots::list_open_with_price(&state.db, user.id).await?;
+    let mut tx = db::begin_as_user(&state.db, user.id).await?;
+    let lots = db::queries::tax_lots::list_open_with_price(&mut tx, user.id).await?;
     let as_of = today();
 
     let (mut basis, mut value, mut st, mut lt) =
@@ -95,7 +96,7 @@ async fn summary(
     // lots). They add to market value only — we have no cost basis for them, so
     // they don't affect unrealized gain/loss or the tax estimate. Debt accounts
     // are liabilities, so their balance is excluded from portfolio value.
-    for acct in db::queries::accounts::balance_only_accounts(&state.db, user.id).await? {
+    for acct in db::queries::accounts::balance_only_accounts(&mut tx, user.id).await? {
         let kind = domain::accounts::AccountKind::resolve(
             acct.subtype.as_deref(),
             acct.kind_override.as_deref(),
@@ -104,6 +105,7 @@ async fn summary(
             value += acct.current_balance;
         }
     }
+    tx.commit().await?;
 
     let estimate = tax::estimate_liquidation(status, user.taxable_income, st, lt);
 
@@ -145,11 +147,12 @@ async fn harvest(
     let user = auth.0;
     let status = parse_status(&user.filing_status);
     let as_of = today();
-    let lots = db::queries::tax_lots::list_open_with_price(&state.db, user.id).await?;
+    let mut tx = db::begin_as_user(&state.db, user.id).await?;
+    let lots = db::queries::tax_lots::list_open_with_price(&mut tx, user.id).await?;
 
     // Retirement accounts (IRA/401k/…) are tax-advantaged and debt accounts are
     // liabilities — neither harvests, so their lots are never candidates.
-    let excluded: std::collections::HashSet<Uuid> = db::queries::accounts::list(&state.db, user.id)
+    let excluded: std::collections::HashSet<Uuid> = db::queries::accounts::list(&mut tx, user.id)
         .await?
         .into_iter()
         .filter(|a| {
@@ -164,10 +167,11 @@ async fn harvest(
 
     let since = as_of - Duration::days(WASH_SALE_DAYS);
     let recent_buys: std::collections::HashSet<Uuid> =
-        db::queries::transactions::recent_buy_security_ids(&state.db, user.id, since)
+        db::queries::transactions::recent_buy_security_ids(&mut tx, user.id, since)
             .await?
             .into_iter()
             .collect();
+    tx.commit().await?;
 
     let mut candidates = Vec::new();
     for lot in &lots {
@@ -259,7 +263,9 @@ async fn simulate(
     let status = parse_status(&user.filing_status);
     let as_of = today();
 
-    let lots = db::queries::tax_lots::list_open_with_price(&state.db, user.id).await?;
+    let mut tx = db::begin_as_user(&state.db, user.id).await?;
+    let lots = db::queries::tax_lots::list_open_with_price(&mut tx, user.id).await?;
+    tx.commit().await?;
     let by_id: HashMap<Uuid, _> = lots.into_iter().map(|l| (l.id, l)).collect();
 
     let (mut proceeds, mut basis, mut st, mut lt) =

@@ -30,7 +30,9 @@ async fn list(
     user: AuthUser,
     Query(q): Query<ListQuery>,
 ) -> Result<Json<Value>, AppError> {
-    let alerts = db::queries::alerts::list(&state.db, user.0.id, q.unread_only).await?;
+    let mut tx = db::begin_as_user(&state.db, user.0.id).await?;
+    let alerts = db::queries::alerts::list(&mut tx, user.0.id, q.unread_only).await?;
+    tx.commit().await?;
     Ok(Json(json!({ "alerts": alerts })))
 }
 
@@ -41,7 +43,9 @@ async fn mark_read(
 ) -> Result<Json<Value>, AppError> {
     // `mark_read` scopes by user_id, so marking another user's alert simply
     // changes nothing → 404 (no cross-tenant write, no existence leak beyond it).
-    let changed = db::queries::alerts::mark_read(&state.db, user.0.id, id).await?;
+    let mut tx = db::begin_as_user(&state.db, user.0.id).await?;
+    let changed = db::queries::alerts::mark_read(&mut tx, user.0.id, id).await?;
+    tx.commit().await?;
     if !changed {
         return Err(AppError::NotFound);
     }

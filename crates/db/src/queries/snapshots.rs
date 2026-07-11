@@ -5,7 +5,7 @@
 use chrono::NaiveDate;
 use rust_decimal::Decimal;
 use serde::Serialize;
-use sqlx::{FromRow, PgPool};
+use sqlx::{FromRow, PgConnection};
 use uuid::Uuid;
 
 /// A single day's portfolio totals.
@@ -20,7 +20,7 @@ pub struct Snapshot {
 /// "total" for the whole portfolio, or "retirement"/"taxable" for the subset.
 /// Idempotent per (day, scope): re-running the cycle replaces the row.
 pub async fn upsert(
-    pool: &PgPool,
+    conn: &mut PgConnection,
     user_id: Uuid,
     as_of: NaiveDate,
     scope: &str,
@@ -41,13 +41,17 @@ pub async fn upsert(
     .bind(scope)
     .bind(market_value)
     .bind(cost_basis)
-    .execute(pool)
+    .execute(&mut *conn)
     .await?;
     Ok(())
 }
 
 /// A user's snapshots for one `scope`, oldest first (chart-ready).
-pub async fn history(pool: &PgPool, user_id: Uuid, scope: &str) -> sqlx::Result<Vec<Snapshot>> {
+pub async fn history(
+    conn: &mut PgConnection,
+    user_id: Uuid,
+    scope: &str,
+) -> sqlx::Result<Vec<Snapshot>> {
     sqlx::query_as::<_, Snapshot>(
         r#"
         SELECT as_of, market_value, cost_basis
@@ -58,6 +62,6 @@ pub async fn history(pool: &PgPool, user_id: Uuid, scope: &str) -> sqlx::Result<
     )
     .bind(user_id)
     .bind(scope)
-    .fetch_all(pool)
+    .fetch_all(&mut *conn)
     .await
 }

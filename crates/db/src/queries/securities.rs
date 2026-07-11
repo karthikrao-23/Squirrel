@@ -3,12 +3,12 @@
 
 use chrono::NaiveDate;
 use rust_decimal::Decimal;
-use sqlx::PgPool;
+use sqlx::PgConnection;
 use uuid::Uuid;
 
 #[allow(clippy::too_many_arguments)]
 pub async fn upsert(
-    pool: &PgPool,
+    conn: &mut PgConnection,
     plaid_security_id: &str,
     ticker: Option<&str>,
     name: Option<&str>,
@@ -43,6 +43,6 @@ pub async fn upsert(
     .bind(close_price)
     .bind(close_price_as_of)
     .bind(currency)
-    .fetch_one(pool)
+    .fetch_one(&mut *conn)
     .await
 }

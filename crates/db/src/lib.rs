@@ -3,12 +3,49 @@
 
 use log::LevelFilter;
 use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
-use sqlx::ConnectOptions;
+use sqlx::{ConnectOptions, Postgres, Transaction};
 use std::str::FromStr;
 use std::time::Duration;
+use uuid::Uuid;
 
 pub mod models;
 pub mod queries;
+
+/// Begin a transaction scoped to `user_id` for Postgres Row-Level Security.
+///
+/// Sets the `app.user_id` GUC **transaction-locally** (via `set_config(_, _, true)`,
+/// which — unlike `SET LOCAL` — accepts a bind parameter, so the id can never be
+/// interpolated). Every RLS policy compares `user_id` against this GUC, so all
+/// tenant queries run on the returned transaction see only that user's rows, and
+/// the setting reverts when the tx ends — a pooled connection never carries one
+/// tenant's identity into the next request.
+///
+/// Callers MUST run their tenant queries on this transaction and `commit()` it
+/// (drop = rollback). A tenant query run without this (missing GUC) matches no
+/// rows: RLS fails **closed**.
+pub async fn begin_as_user(
+    pool: &PgPool,
+    user_id: Uuid,
+) -> sqlx::Result<Transaction<'static, Postgres>> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("SELECT set_config('app.user_id', $1, true)")
+        .bind(user_id.to_string())
+        .execute(&mut *tx)
+        .await?;
+    Ok(tx)
+}
+
+/// Begin a transaction that **bypasses** RLS, for trusted, genuinely cross-tenant
+/// system work — e.g. the Plaid per-app capacity count that spans all users, or
+/// the webhook path that arrives without an authenticated user. The bypass GUC is
+/// only ever set here, from server-controlled code, never from user input.
+pub async fn begin_system(pool: &PgPool) -> sqlx::Result<Transaction<'static, Postgres>> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("SELECT set_config('app.rls_bypass', 'on', true)")
+        .execute(&mut *tx)
+        .await?;
+    Ok(tx)
+}
 
 /// Create a connection pool to PostgreSQL.
 ///

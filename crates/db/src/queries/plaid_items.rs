@@ -1,7 +1,7 @@
 //! Plaid item queries. An "item" is one linked institution; it owns the
 //! encrypted access token we use for all subsequent data pulls.
 
-use sqlx::PgPool;
+use sqlx::PgConnection;
 use uuid::Uuid;
 
 use crate::models::PlaidItem;
@@ -10,7 +10,7 @@ use crate::models::PlaidItem;
 /// re-linked. Returns the stored row (with our internal UUID).
 #[allow(clippy::too_many_arguments)]
 pub async fn upsert(
-    pool: &PgPool,
+    conn: &mut PgConnection,
     user_id: Uuid,
     plaid_item_id: &str,
     access_token_encrypted: &[u8],
@@ -35,7 +35,7 @@ pub async fn upsert(
     .bind(access_token_encrypted)
     .bind(institution_id)
     .bind(plaid_client_id)
-    .fetch_one(pool)
+    .fetch_one(&mut *conn)
     .await
 }
 
@@ -46,7 +46,7 @@ pub async fn upsert(
 /// `plaid_client_id` (they belong to the primary app); that bucket is `None`.
 /// Drives capacity-based routing of new connections.
 pub async fn connection_counts_by_client(
-    pool: &PgPool,
+    conn: &mut PgConnection,
 ) -> sqlx::Result<Vec<(Option<String>, i64)>> {
     sqlx::query_as::<_, (Option<String>, i64)>(
         r#"
@@ -59,7 +59,7 @@ pub async fn connection_counts_by_client(
         GROUP BY plaid_client_id
         "#,
     )
-    .fetch_all(pool)
+    .fetch_all(&mut *conn)
     .await
 }
 
@@ -67,7 +67,7 @@ pub async fn connection_counts_by_client(
 /// capacity (Plaid doesn't free the slot). Called after the item's rows are
 /// deleted; stores only the app + audit fields, no financial data.
 pub async fn record_removed(
-    pool: &PgPool,
+    conn: &mut PgConnection,
     user_id: Uuid,
     plaid_client_id: &str,
     plaid_item_id: &str,
@@ -83,7 +83,7 @@ pub async fn record_removed(
     .bind(plaid_client_id)
     .bind(plaid_item_id)
     .bind(institution_name)
-    .execute(pool)
+    .execute(&mut *conn)
     .await?;
     Ok(())
 }
@@ -95,56 +95,64 @@ pub async fn record_removed(
 /// institution share an id, so a webhook for it must re-sync each owner's item.
 /// In production a real item id belongs to one user, so this is usually one row.
 pub async fn find_all_by_plaid_item_id(
-    pool: &PgPool,
+    conn: &mut PgConnection,
     plaid_item_id: &str,
 ) -> sqlx::Result<Vec<PlaidItem>> {
     sqlx::query_as::<_, PlaidItem>("SELECT * FROM plaid_items WHERE plaid_item_id = $1")
         .bind(plaid_item_id)
-        .fetch_all(pool)
+        .fetch_all(&mut *conn)
         .await
 }
 
 /// Record the institution id once we learn it from a holdings response.
-pub async fn set_institution_id(pool: &PgPool, id: Uuid, institution_id: &str) -> sqlx::Result<()> {
+pub async fn set_institution_id(
+    conn: &mut PgConnection,
+    id: Uuid,
+    institution_id: &str,
+) -> sqlx::Result<()> {
     sqlx::query(
         "UPDATE plaid_items SET institution_id = $2, updated_at = now() WHERE id = $1 AND institution_id IS NULL",
     )
     .bind(id)
     .bind(institution_id)
-    .execute(pool)
+    .execute(&mut *conn)
     .await?;
     Ok(())
 }
 
 /// All items linked by a user (used by the scheduler to refresh each).
-pub async fn list_for_user(pool: &PgPool, user_id: Uuid) -> sqlx::Result<Vec<PlaidItem>> {
+pub async fn list_for_user(conn: &mut PgConnection, user_id: Uuid) -> sqlx::Result<Vec<PlaidItem>> {
     sqlx::query_as::<_, PlaidItem>(
         "SELECT * FROM plaid_items WHERE user_id = $1 ORDER BY created_at",
     )
     .bind(user_id)
-    .fetch_all(pool)
+    .fetch_all(&mut *conn)
     .await
 }
 
 /// A single item by its UUID, scoped to the owning user (`None` if it isn't
 /// theirs or doesn't exist). Used before removing a connection so we can pull the
 /// access token to disconnect on Plaid's side.
-pub async fn find_by_id(pool: &PgPool, user_id: Uuid, id: Uuid) -> sqlx::Result<Option<PlaidItem>> {
+pub async fn find_by_id(
+    conn: &mut PgConnection,
+    user_id: Uuid,
+    id: Uuid,
+) -> sqlx::Result<Option<PlaidItem>> {
     sqlx::query_as::<_, PlaidItem>("SELECT * FROM plaid_items WHERE id = $1 AND user_id = $2")
         .bind(id)
         .bind(user_id)
-        .fetch_optional(pool)
+        .fetch_optional(&mut *conn)
         .await
 }
 
 /// Delete a user's item; ON DELETE CASCADE removes its accounts, holdings,
 /// transactions, and tax lots. Scoped by `user_id` so one user can't delete
 /// another's connection. Returns the number of rows removed (0 = not found).
-pub async fn delete(pool: &PgPool, user_id: Uuid, id: Uuid) -> sqlx::Result<u64> {
+pub async fn delete(conn: &mut PgConnection, user_id: Uuid, id: Uuid) -> sqlx::Result<u64> {
     let res = sqlx::query("DELETE FROM plaid_items WHERE id = $1 AND user_id = $2")
         .bind(id)
         .bind(user_id)
-        .execute(pool)
+        .execute(&mut *conn)
         .await?;
     Ok(res.rows_affected())
 }
