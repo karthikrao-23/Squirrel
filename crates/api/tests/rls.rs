@@ -48,7 +48,7 @@ async fn restricted_pool(admin: &PgPool) -> PgPool {
 /// (so the RLS `WITH CHECK` is satisfied).
 async fn seed_alert(pool: &PgPool, user_id: Uuid, title: &str) {
     let mut tx = db::begin_as_user(pool, user_id).await.unwrap();
-    db::queries::alerts::create_if_absent(
+    db::queries::alerts::upsert_active(
         &mut tx,
         user_id,
         "approaching_long_term",
@@ -115,7 +115,7 @@ async fn rls_isolates_tenants(admin: PgPool) {
     // Cross-tenant WRITE is blocked: A's GUC is set, but the row is owned by B.
     // The RLS `WITH CHECK` rejects the insert.
     let mut tx = db::begin_as_user(&pool, a.id).await.unwrap();
-    let res = db::queries::alerts::create_if_absent(
+    let res = db::queries::alerts::upsert_active(
         &mut tx,
         b.id,
         "approaching_long_term",

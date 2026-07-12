@@ -399,61 +399,68 @@ async fn snapshots_upsert_idempotent_and_history_ordered_per_user(
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn alerts_dedup_until_read(pool: PgPool) -> sqlx::Result<()> {
+async fn alert_upsert_refreshes_in_place_until_read(pool: PgPool) -> sqlx::Result<()> {
     let user = queries::users::ensure_default(&pool).await?;
-    let payload = serde_json::json!({"saving": 100});
 
-    let first = queries::alerts::create_if_absent(
+    // First time: a new alert is created.
+    let (first, created) = queries::alerts::upsert_active(
         &mut *pool.acquire().await?,
         user.id,
         "harvestable_loss",
         None,
         "Loss",
-        "msg",
-        payload.clone(),
+        "old msg",
+        serde_json::json!({"estimated_tax_saving": "100"}),
     )
     .await?;
-    assert!(first.is_some(), "first alert is created");
+    assert!(created, "first alert is created");
 
-    let dup = queries::alerts::create_if_absent(
+    // Same standing condition with fresh figures: refreshes the SAME row in
+    // place rather than creating a duplicate or being suppressed.
+    let (refreshed, created2) = queries::alerts::upsert_active(
         &mut *pool.acquire().await?,
         user.id,
         "harvestable_loss",
         None,
         "Loss",
-        "msg",
-        payload.clone(),
+        "new msg",
+        serde_json::json!({"estimated_tax_saving": "150"}),
     )
     .await?;
-    assert!(dup.is_none(), "duplicate unread alert is suppressed");
-
-    // Once read, the same condition can alert again.
+    assert!(!created2, "standing condition refreshes, not re-creates");
+    assert_eq!(refreshed.id, first.id, "same row refreshed");
+    assert_eq!(refreshed.message, "new msg", "message updated in place");
     assert!(
-        queries::alerts::mark_read(&mut *pool.acquire().await?, user.id, first.unwrap().id).await?
+        refreshed.updated_at >= first.updated_at,
+        "updated_at advances"
     );
-    let again = queries::alerts::create_if_absent(
-        &mut *pool.acquire().await?,
-        user.id,
-        "harvestable_loss",
-        None,
-        "Loss",
-        "msg",
-        payload,
-    )
-    .await?;
-    assert!(again.is_some());
-
     assert_eq!(
         queries::alerts::list(&mut *pool.acquire().await?, user.id, false)
             .await?
             .len(),
-        2
+        1,
+        "still just one row"
     );
+
+    // Once read, the same condition creates a fresh alert again.
+    assert!(queries::alerts::mark_read(&mut *pool.acquire().await?, user.id, first.id).await?);
+    let (_, created3) = queries::alerts::upsert_active(
+        &mut *pool.acquire().await?,
+        user.id,
+        "harvestable_loss",
+        None,
+        "Loss",
+        "msg",
+        serde_json::json!({}),
+    )
+    .await?;
+    assert!(created3, "after read, a new alert is created");
     assert_eq!(
         queries::alerts::list(&mut *pool.acquire().await?, user.id, true)
             .await?
             .len(),
-        1
+        1,
+        "one unread (the new one)"
     );
     Ok(())
 }
