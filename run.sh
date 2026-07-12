@@ -126,8 +126,27 @@ trap cleanup EXIT INT TERM
 log "Building the backend (cargo build -p api) — the first build can take a few minutes"
 cargo build -p api
 
-log "Starting the backend (cargo run -p api)"
-cargo run -p api &
+# --- Tenant isolation (RLS): run the app as a NON-superuser role, like prod -----
+# Postgres Row-Level Security is bypassed for SUPERUSER roles, so if the app
+# connected as the default `taxloss` owner (a superuser), RLS would be a silent
+# no-op locally. Instead we mirror production: migrate + provision a DML-only
+# runtime role as the owner, then run the app as that role so RLS actually binds.
+# (`DATABASE_URL` in .env stays the owner connection, used only for migration.)
+owner_url="$(sed -n 's/^DATABASE_URL=//p' .env | head -1)"
+owner_url="${owner_url%\"}"; owner_url="${owner_url#\"}"   # strip optional quotes
+[[ -n "$owner_url" ]] || die "DATABASE_URL not found in .env"
+runtime_role="squirrel_local"
+runtime_pw="squirrel_local_pw"
+# Same host/port/database as the owner URL, but the non-superuser role.
+runtime_url="postgres://${runtime_role}:${runtime_pw}@${owner_url#*@}"
+
+log "Applying migrations + provisioning the non-superuser runtime role ($runtime_role)"
+DATABASE_URL="$owner_url" LOCAL_DB_ROLE="$runtime_role" LOCAL_DB_PASSWORD="$runtime_pw" \
+  cargo run -q -p api --example provision_local_role \
+  || die "failed to apply migrations / provision the runtime role"
+
+log "Starting the backend as $runtime_role (non-superuser, so RLS enforces) on :8080"
+DATABASE_URL="$runtime_url" RUN_MIGRATIONS=false cargo run -p api &
 backend_pid=$!
 
 log "Waiting for the API to come up on :8080"
