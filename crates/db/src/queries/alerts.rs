@@ -7,11 +7,16 @@ use uuid::Uuid;
 
 use crate::models::Alert;
 
-/// Insert an alert only if there isn't already an **unread** one of the same
-/// `(type, security)` for this user — prevents the scheduler from re-spamming a
-/// standing condition. Returns the new row, or `None` if a duplicate suppressed it.
+/// Create-or-refresh an alert for a standing condition. One live alert per
+/// `(user, type, security)`: if an **unread** one already exists we refresh its
+/// title/message/payload/`updated_at` in place (so the periodic cycle keeps the
+/// figures + timestamp current instead of leaving a stale copy from first
+/// detection); otherwise we insert a new one. Returns the row and whether it was
+/// newly created (so the caller can count/email only genuinely-new alerts).
+///
+/// Read alerts are left untouched — the user already engaged with them.
 #[allow(clippy::too_many_arguments)]
-pub async fn create_if_absent(
+pub async fn upsert_active(
     conn: &mut PgConnection,
     user_id: Uuid,
     alert_type: &str,
@@ -19,17 +24,35 @@ pub async fn create_if_absent(
     title: &str,
     message: &str,
     payload: Value,
-) -> sqlx::Result<Option<Alert>> {
-    sqlx::query_as::<_, Alert>(
+) -> sqlx::Result<(Alert, bool)> {
+    // Refresh an existing unread alert if present.
+    let refreshed = sqlx::query_as::<_, Alert>(
+        r#"
+        UPDATE alerts
+        SET title = $4, message = $5, payload = $6, updated_at = now()
+        WHERE user_id = $1 AND type = $2
+          AND security_id IS NOT DISTINCT FROM $3
+          AND read_at IS NULL
+        RETURNING *
+        "#,
+    )
+    .bind(user_id)
+    .bind(alert_type)
+    .bind(security_id)
+    .bind(title)
+    .bind(message)
+    .bind(&payload)
+    .fetch_optional(&mut *conn)
+    .await?;
+    if let Some(alert) = refreshed {
+        return Ok((alert, false));
+    }
+
+    // None to refresh → insert a new one.
+    let created = sqlx::query_as::<_, Alert>(
         r#"
         INSERT INTO alerts (user_id, type, security_id, title, message, payload)
-        SELECT $1, $2, $3, $4, $5, $6
-        WHERE NOT EXISTS (
-            SELECT 1 FROM alerts
-            WHERE user_id = $1 AND type = $2
-              AND security_id IS NOT DISTINCT FROM $3
-              AND read_at IS NULL
-        )
+        VALUES ($1, $2, $3, $4, $5, $6)
         RETURNING *
         "#,
     )
@@ -39,8 +62,48 @@ pub async fn create_if_absent(
     .bind(title)
     .bind(message)
     .bind(payload)
-    .fetch_optional(&mut *conn)
+    .fetch_one(&mut *conn)
+    .await?;
+    Ok((created, true))
+}
+
+/// Unread alerts of a given `type` for a user — used to reconcile standing
+/// conditions against the current cycle (e.g. detect harvest opportunities that
+/// have since disappeared).
+pub async fn list_unread_by_type(
+    conn: &mut PgConnection,
+    user_id: Uuid,
+    alert_type: &str,
+) -> sqlx::Result<Vec<Alert>> {
+    sqlx::query_as::<_, Alert>(
+        "SELECT * FROM alerts WHERE user_id = $1 AND type = $2 AND read_at IS NULL",
+    )
+    .bind(user_id)
+    .bind(alert_type)
+    .fetch_all(&mut *conn)
     .await
+}
+
+/// Retype an alert to a terminal state (e.g. a harvest opportunity that lapsed
+/// unacted → `missed_harvest`) with a new message/payload. Stays unread so the
+/// user still sees it; `updated_at` marks when the transition happened.
+pub async fn retype(
+    conn: &mut PgConnection,
+    id: Uuid,
+    new_type: &str,
+    message: &str,
+    payload: Value,
+) -> sqlx::Result<()> {
+    sqlx::query(
+        "UPDATE alerts SET type = $2, message = $3, payload = $4, updated_at = now() WHERE id = $1",
+    )
+    .bind(id)
+    .bind(new_type)
+    .bind(message)
+    .bind(payload)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
 }
 
 /// List a user's alerts, newest first; optionally only the unread ones.

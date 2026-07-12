@@ -66,7 +66,9 @@ pub async fn evaluate_and_store_for_user(state: &AppState, user: &User) -> anyho
     let mut created = 0;
     for candidate in &candidates {
         let payload = serde_json::to_value(candidate)?;
-        let inserted = db::queries::alerts::create_if_absent(
+        // Upsert: create a new alert, or refresh the standing one in place so its
+        // figures + timestamp stay current instead of freezing at first detection.
+        let (_, is_new) = db::queries::alerts::upsert_active(
             &mut tx,
             user.id,
             candidate.kind.as_str(),
@@ -76,12 +78,61 @@ pub async fn evaluate_and_store_for_user(state: &AppState, user: &User) -> anyho
             payload,
         )
         .await?;
-        if inserted.is_some() {
+        if is_new {
             created += 1;
         }
     }
+
+    // Missed harvest opportunities: an unread harvestable-loss alert whose
+    // security is no longer a current loss candidate means the window closed
+    // without the user acting. Retype it to `missed_harvest`, keeping the
+    // last-known saving and recording the window it was open.
+    let active_loss: HashSet<Uuid> = candidates
+        .iter()
+        .filter(|c| c.kind.as_str() == "harvestable_loss")
+        .map(|c| c.security_id)
+        .collect();
+    let mut missed = 0;
+    for alert in
+        db::queries::alerts::list_unread_by_type(&mut tx, user.id, "harvestable_loss").await?
+    {
+        let Some(sid) = alert.security_id else {
+            continue;
+        };
+        if active_loss.contains(&sid) {
+            continue; // still an active opportunity — leave it (already refreshed above)
+        }
+        let label = alert
+            .payload
+            .get("ticker")
+            .and_then(|v| v.as_str())
+            .unwrap_or("this security");
+        let saving = alert
+            .payload
+            .get("estimated_tax_saving")
+            .and_then(|v| v.as_str());
+        let available_since = alert.created_at.date_naive();
+        let message = match saving {
+            Some(s) => format!(
+                "Missed tax-loss harvesting on {label}: ~${s} of estimated tax savings was \
+                 available (open {available_since} – {as_of}) but the opportunity has since closed."
+            ),
+            None => format!(
+                "Missed tax-loss harvesting on {label}: the opportunity was available \
+                 (open {available_since} – {as_of}) but has since closed."
+            ),
+        };
+        let mut payload = alert.payload.clone();
+        if let Some(obj) = payload.as_object_mut() {
+            obj.insert("missed_on".into(), serde_json::json!(as_of));
+            obj.insert("available_since".into(), serde_json::json!(available_since));
+        }
+        db::queries::alerts::retype(&mut tx, alert.id, "missed_harvest", &message, payload).await?;
+        missed += 1;
+    }
+
     tx.commit().await?;
-    tracing::info!(user = %user.id, created, evaluated = candidates.len(), "alerts evaluated");
+    tracing::info!(user = %user.id, created, missed, evaluated = candidates.len(), "alerts evaluated");
     Ok(created)
 }
 

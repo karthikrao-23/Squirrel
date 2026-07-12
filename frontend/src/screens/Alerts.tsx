@@ -4,8 +4,17 @@ import type { Alert } from "../api/types";
 import { Card, EmptyState, ErrorState, Spinner } from "../components/ui";
 import { money, relativeTime } from "../lib/format";
 
-function isLongTerm(a: Alert) {
-  return a.type === "approaching_long_term";
+/** Icon, colour class, and chip label for each alert type. */
+function look(a: Alert): { icon: string; ic: string; chip: string; label: string } {
+  switch (a.type) {
+    case "approaching_long_term":
+      return { icon: "⏳", ic: "lt", chip: "lt", label: "approaching long-term" };
+    case "missed_harvest":
+      return { icon: "⚠️", ic: "missed", chip: "warn", label: "missed harvest" };
+    case "harvestable_loss":
+    default:
+      return { icon: "📉", ic: "loss", chip: "loss", label: "harvestable loss" };
+  }
 }
 
 /** Pull the estimated saving out of the alert payload, if present. */
@@ -14,6 +23,12 @@ function saving(a: Alert): number | null {
   if (typeof v === "number") return v;
   if (typeof v === "string") return parseFloat(v);
   return null;
+}
+
+/** A string field from the alert payload (e.g. a date), if present. */
+function payloadStr(a: Alert, key: string): string | null {
+  const v = (a.payload as Record<string, unknown>)?.[key];
+  return typeof v === "string" ? v : null;
 }
 
 export function Alerts() {
@@ -26,7 +41,7 @@ export function Alerts() {
     <div className="app" style={{ maxWidth: 820 }}>
       <div className="page-head">
         <h1>Alerts</h1>
-        <p>Tax-aware sell &amp; harvest signals from the nightly scheduler.</p>
+        <p>Tax-aware sell &amp; harvest signals, refreshed automatically as your data updates.</p>
       </div>
 
       <div className="toolbar">
@@ -63,19 +78,26 @@ export function Alerts() {
           alerts.data!.map((a) => {
             const unread = a.read_at == null;
             const s = saving(a);
+            const l = look(a);
+            const missed = a.type === "missed_harvest";
+            const missedOn = payloadStr(a, "missed_on");
             return (
               <div className={`alert-item ${unread ? "unread" : ""}`} key={a.id}>
                 {unread ? <span className="unread-dot" /> : <span style={{ width: 8, flex: "none" }} />}
-                <div className={`alert-ic ${isLongTerm(a) ? "lt" : "loss"}`}>
-                  {isLongTerm(a) ? "⏳" : "📉"}
-                </div>
+                <div className={`alert-ic ${l.ic}`}>{l.icon}</div>
                 <div className="alert-body">
                   <div className={`t ${unread ? "" : "muted"}`}>{a.title}</div>
                   <div className="m">{a.message}</div>
                   <div className="alert-meta">
-                    <span className={`chip ${isLongTerm(a) ? "lt" : "loss"}`}>{a.type}</span>
-                    {s != null && <span className="gain">+{money(s)} saving</span>}
-                    <span>· {relativeTime(a.created_at)}</span>
+                    <span className={`chip ${l.chip}`}>{l.label}</span>
+                    {s != null &&
+                      (missed ? (
+                        <span className="faint">~{money(s)} missed</span>
+                      ) : (
+                        <span className="gain">+{money(s)} saving</span>
+                      ))}
+                    {missed && missedOn && <span className="faint">· missed {missedOn}</span>}
+                    <span>· {relativeTime(a.updated_at)}</span>
                     {a.emailed_at ? <span>· ✉ emailed</span> : <span className="faint">· not emailed</span>}
                   </div>
                 </div>

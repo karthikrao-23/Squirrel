@@ -170,6 +170,7 @@ pub struct Alert {
     pub message: String,
     pub payload: serde_json::Value,
     pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
     pub read_at: Option<DateTime<Utc>>,
     pub emailed_at: Option<DateTime<Utc>>,
 }

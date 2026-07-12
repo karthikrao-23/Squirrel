@@ -290,6 +290,7 @@ hr.sep { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
 .alert-ic { width: 34px; height: 34px; border-radius: 8px; display: grid; place-items: center; flex: none; font-size: 16px; }
 .alert-ic.lt { background: var(--brand-wash); }
 .alert-ic.loss { background: var(--loss-wash); }
+.alert-ic.missed { background: var(--warn-wash); }
 .alert-body { flex: 1; }
 .alert-body .t { font-weight: 600; }
 .alert-body .m { color: var(--text-muted); font-size: 13px; margin-top: 2px; }

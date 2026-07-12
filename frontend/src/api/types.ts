@@ -222,7 +222,10 @@ export interface SimulateResp {
 }
 
 // GET /api/alerts → { alerts: Alert[] }
-export type AlertType = "approaching_long_term" | "harvestable_loss";
+export type AlertType =
+  | "approaching_long_term"
+  | "harvestable_loss"
+  | "missed_harvest";
 export interface Alert {
   id: Uuid;
   user_id: Uuid;
@@ -232,6 +235,7 @@ export interface Alert {
   message: string;
   payload: Record<string, unknown>;
   created_at: IsoDateTime;
+  updated_at: IsoDateTime;
   read_at: IsoDateTime | null;
   emailed_at: IsoDateTime | null;
 }

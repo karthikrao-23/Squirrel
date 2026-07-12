@@ -1019,7 +1019,7 @@ async fn user_a_cannot_read_or_mutate_user_b(pool: PgPool) {
 
     // B has a loss lot (harvestable) and an alert; A has nothing.
     let b_lot = seed_lot(&pool, b, "BONLY", dec!(50), dec!(200), dec!(100)).await;
-    let b_alert = db::queries::alerts::create_if_absent(
+    let b_alert = db::queries::alerts::upsert_active(
         &mut *pool.acquire().await.unwrap(),
         b,
         "harvestable_loss",
@@ -1030,7 +1030,7 @@ async fn user_a_cannot_read_or_mutate_user_b(pool: PgPool) {
     )
     .await
     .unwrap()
-    .unwrap();
+    .0;
 
     // A's reads never surface B's data.
     let holdings = get_auth(&app, "/api/holdings", &cookie_a).await;
@@ -1403,4 +1403,62 @@ async fn login_without_forwarded_header_does_not_500(pool: PgPool) {
         .unwrap();
     let resp = app.clone().oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn harvest_opportunity_that_lapses_becomes_missed(pool: PgPool) {
+    let app = app(pool.clone());
+    let (_cookie, user_id) = auth(&app, "missed@example.com").await;
+    db::queries::users::update_profile(&pool, user_id, "single", dec!(100000))
+        .await
+        .unwrap();
+    // A large unrealized loss → a harvestable-loss candidate.
+    seed_lot(&pool, user_id, "LOSS", dec!(50), dec!(200), dec!(100)).await;
+
+    let state = api::state::AppState::new(pool.clone(), test_config());
+    let user = db::queries::users::find_by_id(&pool, user_id)
+        .await
+        .unwrap()
+        .unwrap();
+
+    // First cycle: creates the harvestable-loss alert.
+    api::alert_engine::evaluate_and_store_for_user(&state, &user)
+        .await
+        .unwrap();
+    let alerts = db::queries::alerts::list(&mut *pool.acquire().await.unwrap(), user_id, false)
+        .await
+        .unwrap();
+    assert_eq!(alerts.len(), 1);
+    assert_eq!(alerts[0].r#type, "harvestable_loss");
+
+    // The opportunity lapses: the price recovers above cost basis, so it's no
+    // longer a loss candidate.
+    db::queries::securities::upsert(
+        &mut *pool.acquire().await.unwrap(),
+        "sec_LOSS",
+        Some("LOSS"),
+        None,
+        None,
+        None,
+        Some(dec!(300)),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    // Next cycle: the unread, now-resolved alert is retyped to `missed_harvest`
+    // in place (not a new row), with the missed date recorded.
+    api::alert_engine::evaluate_and_store_for_user(&state, &user)
+        .await
+        .unwrap();
+    let after = db::queries::alerts::list(&mut *pool.acquire().await.unwrap(), user_id, false)
+        .await
+        .unwrap();
+    assert_eq!(after.len(), 1, "same alert retyped, not duplicated");
+    assert_eq!(after[0].r#type, "missed_harvest");
+    assert!(
+        after[0].payload.get("missed_on").is_some(),
+        "missed alert records the date it lapsed"
+    );
 }
