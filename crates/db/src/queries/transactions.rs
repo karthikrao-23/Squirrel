@@ -4,7 +4,7 @@
 use chrono::NaiveDate;
 use rust_decimal::Decimal;
 use serde::Serialize;
-use sqlx::{FromRow, PgPool};
+use sqlx::{FromRow, PgConnection};
 use uuid::Uuid;
 
 /// A transaction joined with its security ticker, for the API.
@@ -24,7 +24,11 @@ pub struct TransactionView {
 }
 
 /// Recent transactions, newest first.
-pub async fn list(pool: &PgPool, user_id: Uuid, limit: i64) -> sqlx::Result<Vec<TransactionView>> {
+pub async fn list(
+    conn: &mut PgConnection,
+    user_id: Uuid,
+    limit: i64,
+) -> sqlx::Result<Vec<TransactionView>> {
     sqlx::query_as::<_, TransactionView>(
         r#"
         SELECT t.id, t.date, t.account_id, s.ticker, t.type AS transaction_type,
@@ -38,7 +42,7 @@ pub async fn list(pool: &PgPool, user_id: Uuid, limit: i64) -> sqlx::Result<Vec<
     )
     .bind(user_id)
     .bind(limit)
-    .fetch_all(pool)
+    .fetch_all(&mut *conn)
     .await
 }
 
@@ -60,7 +64,7 @@ pub struct LotTxnRow {
 /// Security ids the user *bought* on or after `since` — used to flag wash-sale
 /// risk (a purchase within 30 days of selling the same security at a loss).
 pub async fn recent_buy_security_ids(
-    pool: &PgPool,
+    conn: &mut PgConnection,
     user_id: Uuid,
     since: NaiveDate,
 ) -> sqlx::Result<Vec<Uuid>> {
@@ -74,11 +78,11 @@ pub async fn recent_buy_security_ids(
     )
     .bind(user_id)
     .bind(since)
-    .fetch_all(pool)
+    .fetch_all(&mut *conn)
     .await
 }
 
-pub async fn list_for_lots(pool: &PgPool, user_id: Uuid) -> sqlx::Result<Vec<LotTxnRow>> {
+pub async fn list_for_lots(conn: &mut PgConnection, user_id: Uuid) -> sqlx::Result<Vec<LotTxnRow>> {
     sqlx::query_as::<_, LotTxnRow>(
         r#"
         SELECT t.id, t.account_id, t.security_id, t.type AS transaction_type,
@@ -89,7 +93,7 @@ pub async fn list_for_lots(pool: &PgPool, user_id: Uuid) -> sqlx::Result<Vec<Lot
         "#,
     )
     .bind(user_id)
-    .fetch_all(pool)
+    .fetch_all(&mut *conn)
     .await
 }
 
@@ -112,7 +116,7 @@ pub struct NewTransaction<'a> {
 
 /// Insert a transaction, skipping it if we've already stored it. Returns whether
 /// a new row was inserted (useful for sync summaries).
-pub async fn insert_ignore(pool: &PgPool, tx: &NewTransaction<'_>) -> sqlx::Result<bool> {
+pub async fn insert_ignore(conn: &mut PgConnection, tx: &NewTransaction<'_>) -> sqlx::Result<bool> {
     let result = sqlx::query(
         r#"
         INSERT INTO transactions
@@ -135,7 +139,7 @@ pub async fn insert_ignore(pool: &PgPool, tx: &NewTransaction<'_>) -> sqlx::Resu
     .bind(tx.date)
     .bind(tx.name)
     .bind(tx.currency)
-    .execute(pool)
+    .execute(&mut *conn)
     .await?;
     Ok(result.rows_affected() > 0)
 }

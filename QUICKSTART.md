@@ -45,7 +45,13 @@ cd Squirrel
 2. creates a local `.env` (and generates an encryption key),
 3. starts **Postgres** in Docker,
 4. installs the frontend dependencies,
-5. starts the **backend** (`:8080`) and **frontend** (`:5173`).
+5. applies migrations and provisions a non-superuser DB role,
+6. starts the **backend** (`:8080`) and **frontend** (`:5173`).
+
+> Step 5 makes local dev mirror production: the app runs as a **non-superuser**
+> role so Postgres **Row-Level Security** (tenant isolation) actually enforces —
+> connecting as the default superuser owner would silently bypass it. `.env`'s
+> `DATABASE_URL` stays the owner connection, used only to run migrations.
 
 When it's up, open **<http://localhost:5173>**, **sign up**, then connect a brokerage.
 

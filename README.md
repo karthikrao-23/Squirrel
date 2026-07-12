@@ -213,6 +213,14 @@ cp .env.example .env                 # add PLAID_*; generate a key:
 cargo run -p api                     # migrations auto-run on startup; serves :8080
 ```
 
+> **Note on Row-Level Security:** this manual `cargo run` connects as the `taxloss`
+> **owner** (a superuser locally), and Postgres bypasses RLS for superusers — so the
+> tenant-isolation policies are a no-op on this path. `./run.sh` instead provisions a
+> non-superuser role and runs the app as it (`RUN_MIGRATIONS=false`), so RLS enforces
+> locally exactly as in production. To mirror that by hand, run
+> `cargo run -p api --example provision_local_role` (as the owner) and then start the
+> app with `DATABASE_URL=postgres://squirrel_local:squirrel_local_pw@localhost:5432/taxloss RUN_MIGRATIONS=false cargo run -p api`.
+
 **Frontend**
 ```bash
 cd frontend

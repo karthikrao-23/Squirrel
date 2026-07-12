@@ -5,7 +5,7 @@
 use chrono::NaiveDate;
 use rust_decimal::Decimal;
 use serde::Serialize;
-use sqlx::{FromRow, PgPool};
+use sqlx::{FromRow, PgConnection};
 use uuid::Uuid;
 
 /// A lot to be inserted during a rebuild (always opens as `status = 'open'`).
@@ -20,13 +20,16 @@ pub struct NewLot {
 }
 
 /// Atomically replace all of a user's lots with a freshly reconstructed set.
-/// Runs in one transaction so a reader never sees a half-rebuilt state.
-pub async fn replace_for_user(pool: &PgPool, user_id: Uuid, lots: &[NewLot]) -> sqlx::Result<u64> {
-    let mut tx = pool.begin().await?;
-
+/// Runs on the caller's transaction (the per-request tenant tx), so the delete +
+/// re-insert commit together and a reader never sees a half-rebuilt state.
+pub async fn replace_for_user(
+    conn: &mut PgConnection,
+    user_id: Uuid,
+    lots: &[NewLot],
+) -> sqlx::Result<u64> {
     sqlx::query("DELETE FROM tax_lots WHERE user_id = $1")
         .bind(user_id)
-        .execute(&mut *tx)
+        .execute(&mut *conn)
         .await?;
 
     for lot in lots {
@@ -46,11 +49,10 @@ pub async fn replace_for_user(pool: &PgPool, user_id: Uuid, lots: &[NewLot]) -> 
         .bind(lot.remaining_quantity)
         .bind(lot.cost_basis_per_share)
         .bind(lot.source_transaction_id)
-        .execute(&mut *tx)
+        .execute(&mut *conn)
         .await?;
     }
 
-    tx.commit().await?;
     Ok(lots.len() as u64)
 }
 
@@ -88,7 +90,7 @@ pub struct OpenLotPriced {
 /// leaves the shared `securities.close_price` null), falling back to the
 /// security close price when there's no holding row for the pair.
 pub async fn list_open_with_price(
-    pool: &PgPool,
+    conn: &mut PgConnection,
     user_id: Uuid,
 ) -> sqlx::Result<Vec<OpenLotPriced>> {
     sqlx::query_as::<_, OpenLotPriced>(
@@ -106,7 +108,7 @@ pub async fn list_open_with_price(
         "#,
     )
     .bind(user_id)
-    .fetch_all(pool)
+    .fetch_all(&mut *conn)
     .await
 }
 
@@ -132,7 +134,7 @@ pub struct LotByAccount {
 /// Like [`list_open_with_price`] but joined to `accounts` for the name/subtype,
 /// and ordered so callers can group by account in a single pass.
 pub async fn list_open_with_account(
-    pool: &PgPool,
+    conn: &mut PgConnection,
     user_id: Uuid,
 ) -> sqlx::Result<Vec<LotByAccount>> {
     sqlx::query_as::<_, LotByAccount>(
@@ -152,11 +154,14 @@ pub async fn list_open_with_account(
         "#,
     )
     .bind(user_id)
-    .fetch_all(pool)
+    .fetch_all(&mut *conn)
     .await
 }
 
-pub async fn list_with_security(pool: &PgPool, user_id: Uuid) -> sqlx::Result<Vec<LotView>> {
+pub async fn list_with_security(
+    conn: &mut PgConnection,
+    user_id: Uuid,
+) -> sqlx::Result<Vec<LotView>> {
     sqlx::query_as::<_, LotView>(
         r#"
         SELECT l.id, l.account_id, l.security_id, s.ticker, l.open_date,
@@ -168,6 +173,6 @@ pub async fn list_with_security(pool: &PgPool, user_id: Uuid) -> sqlx::Result<Ve
         "#,
     )
     .bind(user_id)
-    .fetch_all(pool)
+    .fetch_all(&mut *conn)
     .await
 }

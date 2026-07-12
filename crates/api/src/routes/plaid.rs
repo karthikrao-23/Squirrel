@@ -78,7 +78,11 @@ async fn link_token(
 /// count toward the primary. Errors if every app is at the per-app item cap.
 async fn select_plaid_app(state: &AppState) -> Result<&PlaidClient, AppError> {
     let limit = state.config.plaid_max_items_per_app;
-    let counts = db::queries::plaid_items::connection_counts_by_client(&state.db).await?;
+    // Cross-tenant on purpose: Plaid's per-app Item cap is global (all users share
+    // an app), so this count must span every user's items → RLS-bypass tx.
+    let mut tx = db::begin_system(&state.db).await?;
+    let counts = db::queries::plaid_items::connection_counts_by_client(&mut tx).await?;
+    tx.commit().await?;
     let primary_id = state.plaid.primary().client_id();
     for client in state.plaid.configured() {
         let cid = client.client_id();
@@ -117,18 +121,22 @@ async fn exchange(
 async fn resync(State(state): State<AppState>, user: AuthUser) -> Result<Json<Value>, AppError> {
     require_plaid(&state)?;
     let key = require_key(&state)?;
-    let items = db::queries::plaid_items::list_for_user(&state.db, user.0.id).await?;
+    let mut tx = db::begin_as_user(&state.db, user.0.id).await?;
+    let items = db::queries::plaid_items::list_for_user(&mut tx, user.0.id).await?;
     let mut accounts = 0;
     let mut holdings = 0;
     let mut transactions = 0;
     for item in &items {
         let client = state.plaid.for_item(item.plaid_client_id.as_deref());
-        let s = sync::sync_item(&state.db, client, &key, item).await?;
+        let s = sync::sync_item(&mut tx, client, &key, item).await?;
         accounts += s.accounts;
         holdings += s.holdings;
         transactions += s.transactions_inserted;
     }
+    tx.commit().await?;
     // Prices/holdings just refreshed — re-evaluate alerts against the new data.
+    // (Runs after the sync tx commits so the evaluation, in its own tenant tx,
+    // sees the freshly-written rows.)
     evaluate_alerts_best_effort(&state, &user.0).await;
     Ok(Json(json!({
         "items": items.len(),
@@ -145,8 +153,10 @@ async fn list_items(
     State(state): State<AppState>,
     user: AuthUser,
 ) -> Result<Json<Value>, AppError> {
-    let items = db::queries::plaid_items::list_for_user(&state.db, user.0.id).await?;
-    let accounts = db::queries::accounts::list(&state.db, user.0.id).await?;
+    let mut tx = db::begin_as_user(&state.db, user.0.id).await?;
+    let items = db::queries::plaid_items::list_for_user(&mut tx, user.0.id).await?;
+    let accounts = db::queries::accounts::list(&mut tx, user.0.id).await?;
+    tx.commit().await?;
 
     let connections: Vec<Value> = items
         .iter()
@@ -192,9 +202,11 @@ async fn remove_connection(
     user: AuthUser,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, AppError> {
-    let item = db::queries::plaid_items::find_by_id(&state.db, user.0.id, id)
+    let mut tx = db::begin_as_user(&state.db, user.0.id).await?;
+    let item = db::queries::plaid_items::find_by_id(&mut tx, user.0.id, id)
         .await?
         .ok_or(AppError::NotFound)?;
+    tx.commit().await?;
 
     // Disconnect on Plaid's side so the token is invalidated and no more
     // webhooks/billing accrue. A failure here must not block local removal — the
@@ -228,7 +240,8 @@ async fn remove_connection(
         }
     }
 
-    let removed = db::queries::plaid_items::delete(&state.db, user.0.id, id).await? > 0;
+    let mut tx = db::begin_as_user(&state.db, user.0.id).await?;
+    let removed = db::queries::plaid_items::delete(&mut tx, user.0.id, id).await? > 0;
 
     // Plaid doesn't free the app's connection slot on removal, so tombstone it —
     // otherwise this app would appear to regain capacity it doesn't have. Record
@@ -239,7 +252,7 @@ async fn remove_connection(
             .clone()
             .unwrap_or_else(|| state.plaid.primary().client_id().to_string());
         if let Err(e) = db::queries::plaid_items::record_removed(
-            &state.db,
+            &mut tx,
             user.0.id,
             &client_id,
             &item.plaid_item_id,
@@ -250,6 +263,7 @@ async fn remove_connection(
             tracing::error!(error = %e, item = %id, "failed to record removed-connection tombstone");
         }
     }
+    tx.commit().await?;
 
     tracing::info!(user = %user.0.id, item = %id, removed, "connection removed");
     Ok(Json(json!({ "removed": removed })))
@@ -368,8 +382,9 @@ async fn connect_with_public_token(
     };
 
     let encrypted = crate::crypto::encrypt(&key, exchanged.access_token.as_bytes())?;
+    let mut tx = db::begin_as_user(&state.db, user_id).await?;
     let item = db::queries::plaid_items::upsert(
-        &state.db,
+        &mut tx,
         user_id,
         &exchanged.item_id,
         &encrypted,
@@ -378,7 +393,8 @@ async fn connect_with_public_token(
     )
     .await?;
 
-    let summary = sync::sync_item(&state.db, client, &key, &item).await?;
+    let summary = sync::sync_item(&mut tx, client, &key, &item).await?;
+    tx.commit().await?;
     Ok(ConnectResponse {
         item_id: exchanged.item_id,
         summary,
@@ -393,15 +409,26 @@ async fn resync_item(state: &AppState, plaid_item_id: &str) -> anyhow::Result<()
         .config
         .token_encryption_key
         .ok_or_else(|| anyhow::anyhow!("TOKEN_ENCRYPTION_KEY not configured"))?;
-    let items =
-        db::queries::plaid_items::find_all_by_plaid_item_id(&state.db, plaid_item_id).await?;
+    // The webhook arrives with no authenticated user, so finding the item(s) for
+    // this Plaid id is a cross-tenant lookup → RLS-bypass tx.
+    let items = {
+        let mut tx = db::begin_system(&state.db).await?;
+        let items =
+            db::queries::plaid_items::find_all_by_plaid_item_id(&mut tx, plaid_item_id).await?;
+        tx.commit().await?;
+        items
+    };
     if items.is_empty() {
         tracing::warn!(item = %plaid_item_id, "webhook for unknown item; ignoring");
         return Ok(());
     }
+    // Each item's sync is scoped to *its* owner, so one user's webhook never
+    // reads or writes another user's rows.
     for item in &items {
         let client = state.plaid.for_item(item.plaid_client_id.as_deref());
-        sync::sync_item(&state.db, client, &key, item).await?;
+        let mut tx = db::begin_as_user(&state.db, item.user_id).await?;
+        sync::sync_item(&mut tx, client, &key, item).await?;
+        tx.commit().await?;
     }
     Ok(())
 }

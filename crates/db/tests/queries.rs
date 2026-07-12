@@ -4,6 +4,7 @@
 //! workspace migrations into it, so these exercise the real SQL (upserts, joins,
 //! the transactional lot replace) against PostgreSQL. They need a reachable
 //! Postgres server via `DATABASE_URL` (docker-compose locally; a service in CI).
+#![allow(clippy::explicit_auto_deref)]
 
 use chrono::NaiveDate;
 use db::queries;
@@ -37,11 +38,17 @@ async fn update_profile_round_trips(pool: PgPool) -> sqlx::Result<()> {
 #[sqlx::test(migrations = "../../migrations")]
 async fn holdings_upsert_is_idempotent_per_account_security(pool: PgPool) -> sqlx::Result<()> {
     let user = queries::users::ensure_default(&pool).await?;
-    let item =
-        queries::plaid_items::upsert(&pool, user.id, "item_1", b"enc", Some("ins_1"), "test_app")
-            .await?;
+    let item = queries::plaid_items::upsert(
+        &mut *pool.acquire().await?,
+        user.id,
+        "item_1",
+        b"enc",
+        Some("ins_1"),
+        "test_app",
+    )
+    .await?;
     let acct = queries::accounts::upsert(
-        &pool,
+        &mut *pool.acquire().await?,
         user.id,
         item.id,
         "acct_1",
@@ -53,7 +60,7 @@ async fn holdings_upsert_is_idempotent_per_account_security(pool: PgPool) -> sql
     )
     .await?;
     let sec = queries::securities::upsert(
-        &pool,
+        &mut *pool.acquire().await?,
         "sec_1",
         Some("AAPL"),
         Some("Apple Inc"),
@@ -66,7 +73,7 @@ async fn holdings_upsert_is_idempotent_per_account_security(pool: PgPool) -> sql
     .await?;
 
     queries::holdings::upsert(
-        &pool,
+        &mut *pool.acquire().await?,
         user.id,
         acct,
         sec,
@@ -80,7 +87,7 @@ async fn holdings_upsert_is_idempotent_per_account_security(pool: PgPool) -> sql
     .await?;
     // Re-upsert the same (account, security) with a new quantity.
     queries::holdings::upsert(
-        &pool,
+        &mut *pool.acquire().await?,
         user.id,
         acct,
         sec,
@@ -93,7 +100,8 @@ async fn holdings_upsert_is_idempotent_per_account_security(pool: PgPool) -> sql
     )
     .await?;
 
-    let holdings = queries::holdings::list_with_security(&pool, user.id).await?;
+    let holdings =
+        queries::holdings::list_with_security(&mut *pool.acquire().await?, user.id).await?;
     assert_eq!(holdings.len(), 1, "upsert must not duplicate the pair");
     assert_eq!(holdings[0].ticker.as_deref(), Some("AAPL"));
     assert_eq!(holdings[0].quantity, dec!(20));
@@ -103,10 +111,17 @@ async fn holdings_upsert_is_idempotent_per_account_security(pool: PgPool) -> sql
 #[sqlx::test(migrations = "../../migrations")]
 async fn transaction_insert_ignores_duplicates(pool: PgPool) -> sqlx::Result<()> {
     let user = queries::users::ensure_default(&pool).await?;
-    let item =
-        queries::plaid_items::upsert(&pool, user.id, "item_1", b"enc", None, "test_app").await?;
+    let item = queries::plaid_items::upsert(
+        &mut *pool.acquire().await?,
+        user.id,
+        "item_1",
+        b"enc",
+        None,
+        "test_app",
+    )
+    .await?;
     let acct = queries::accounts::upsert(
-        &pool,
+        &mut *pool.acquire().await?,
         user.id,
         item.id,
         "acct_1",
@@ -135,15 +150,15 @@ async fn transaction_insert_ignores_duplicates(pool: PgPool) -> sqlx::Result<()>
     };
 
     assert!(
-        queries::transactions::insert_ignore(&pool, &tx).await?,
+        queries::transactions::insert_ignore(&mut *pool.acquire().await?, &tx).await?,
         "first insert is new"
     );
     assert!(
-        !queries::transactions::insert_ignore(&pool, &tx).await?,
+        !queries::transactions::insert_ignore(&mut *pool.acquire().await?, &tx).await?,
         "duplicate is ignored"
     );
 
-    let list = queries::transactions::list(&pool, user.id, 100).await?;
+    let list = queries::transactions::list(&mut *pool.acquire().await?, user.id, 100).await?;
     assert_eq!(list.len(), 1);
     Ok(())
 }
@@ -151,10 +166,17 @@ async fn transaction_insert_ignores_duplicates(pool: PgPool) -> sqlx::Result<()>
 #[sqlx::test(migrations = "../../migrations")]
 async fn tax_lots_replace_is_atomic_and_overwrites(pool: PgPool) -> sqlx::Result<()> {
     let user = queries::users::ensure_default(&pool).await?;
-    let item =
-        queries::plaid_items::upsert(&pool, user.id, "item_1", b"enc", None, "test_app").await?;
+    let item = queries::plaid_items::upsert(
+        &mut *pool.acquire().await?,
+        user.id,
+        "item_1",
+        b"enc",
+        None,
+        "test_app",
+    )
+    .await?;
     let acct = queries::accounts::upsert(
-        &pool,
+        &mut *pool.acquire().await?,
         user.id,
         item.id,
         "acct_1",
@@ -166,7 +188,7 @@ async fn tax_lots_replace_is_atomic_and_overwrites(pool: PgPool) -> sqlx::Result
     )
     .await?;
     let sec = queries::securities::upsert(
-        &pool,
+        &mut *pool.acquire().await?,
         "sec_1",
         Some("AAPL"),
         None,
@@ -187,19 +209,23 @@ async fn tax_lots_replace_is_atomic_and_overwrites(pool: PgPool) -> sqlx::Result
         cost_basis_per_share: dec!(5),
         source_transaction_id: None,
     }];
-    let n = queries::tax_lots::replace_for_user(&pool, user.id, &lots).await?;
+    let n =
+        queries::tax_lots::replace_for_user(&mut *pool.acquire().await?, user.id, &lots).await?;
     assert_eq!(n, 1);
 
-    let priced = queries::tax_lots::list_open_with_price(&pool, user.id).await?;
+    let priced =
+        queries::tax_lots::list_open_with_price(&mut *pool.acquire().await?, user.id).await?;
     assert_eq!(priced.len(), 1);
     assert_eq!(priced[0].close_price, Some(dec!(190)));
     assert_eq!(priced[0].cost_basis_per_share, dec!(5));
 
     // Replacing with an empty set clears the user's lots.
-    queries::tax_lots::replace_for_user(&pool, user.id, &[]).await?;
-    assert!(queries::tax_lots::list_with_security(&pool, user.id)
-        .await?
-        .is_empty());
+    queries::tax_lots::replace_for_user(&mut *pool.acquire().await?, user.id, &[]).await?;
+    assert!(
+        queries::tax_lots::list_with_security(&mut *pool.acquire().await?, user.id)
+            .await?
+            .is_empty()
+    );
     Ok(())
 }
 
@@ -209,7 +235,7 @@ async fn list_open_with_account_returns_account_info_scoped_by_user(
 ) -> sqlx::Result<()> {
     // Securities are shared across users, so seed one and reuse it.
     let sec = queries::securities::upsert(
-        &pool,
+        &mut *pool.acquire().await?,
         "sec_1",
         Some("AAPL"),
         Some("Apple Inc"),
@@ -229,7 +255,7 @@ async fn list_open_with_account_returns_account_info_scoped_by_user(
         let pool = pool.clone();
         async move {
             let item = queries::plaid_items::upsert(
-                &pool,
+                &mut *pool.acquire().await?,
                 user_id,
                 "item",
                 b"enc",
@@ -238,7 +264,7 @@ async fn list_open_with_account_returns_account_info_scoped_by_user(
             )
             .await?;
             let acct = queries::accounts::upsert(
-                &pool,
+                &mut *pool.acquire().await?,
                 user_id,
                 item.id,
                 "acct",
@@ -258,7 +284,8 @@ async fn list_open_with_account_returns_account_info_scoped_by_user(
                 cost_basis_per_share: dec!(5),
                 source_transaction_id: None,
             }];
-            queries::tax_lots::replace_for_user(&pool, user_id, &lots).await?;
+            queries::tax_lots::replace_for_user(&mut *pool.acquire().await?, user_id, &lots)
+                .await?;
             Ok::<_, sqlx::Error>(())
         }
     };
@@ -266,7 +293,8 @@ async fn list_open_with_account_returns_account_info_scoped_by_user(
     seed_lot(alice.id, "Alice Brokerage", Some("brokerage")).await?;
     seed_lot(bob.id, "Bob IRA", Some("ira")).await?;
 
-    let alice_lots = queries::tax_lots::list_open_with_account(&pool, alice.id).await?;
+    let alice_lots =
+        queries::tax_lots::list_open_with_account(&mut *pool.acquire().await?, alice.id).await?;
     assert_eq!(alice_lots.len(), 1, "alice sees only her own lot");
     let lot = &alice_lots[0];
     assert_eq!(lot.account_name, "Alice Brokerage");
@@ -277,7 +305,8 @@ async fn list_open_with_account_returns_account_info_scoped_by_user(
 
     // Scoping: nothing of Bob's leaks into Alice's result, and vice versa.
     assert!(alice_lots.iter().all(|l| l.account_name != "Bob IRA"));
-    let bob_lots = queries::tax_lots::list_open_with_account(&pool, bob.id).await?;
+    let bob_lots =
+        queries::tax_lots::list_open_with_account(&mut *pool.acquire().await?, bob.id).await?;
     assert_eq!(bob_lots.len(), 1);
     assert_eq!(bob_lots[0].account_name, "Bob IRA");
     Ok(())
@@ -293,7 +322,7 @@ async fn snapshots_upsert_idempotent_and_history_ordered_per_user(
 
     // Two upserts for the same (user, day, scope): the second must overwrite.
     queries::snapshots::upsert(
-        &pool,
+        &mut *pool.acquire().await?,
         user.id,
         date("2026-01-01"),
         "total",
@@ -302,7 +331,7 @@ async fn snapshots_upsert_idempotent_and_history_ordered_per_user(
     )
     .await?;
     queries::snapshots::upsert(
-        &pool,
+        &mut *pool.acquire().await?,
         user.id,
         date("2026-01-01"),
         "total",
@@ -312,7 +341,7 @@ async fn snapshots_upsert_idempotent_and_history_ordered_per_user(
     .await?;
     // An earlier day, inserted after the later one, to prove ordering by as_of.
     queries::snapshots::upsert(
-        &pool,
+        &mut *pool.acquire().await?,
         user.id,
         date("2025-12-31"),
         "total",
@@ -322,7 +351,7 @@ async fn snapshots_upsert_idempotent_and_history_ordered_per_user(
     .await?;
     // A different scope on the same day is a distinct row.
     queries::snapshots::upsert(
-        &pool,
+        &mut *pool.acquire().await?,
         user.id,
         date("2026-01-01"),
         "retirement",
@@ -333,7 +362,7 @@ async fn snapshots_upsert_idempotent_and_history_ordered_per_user(
 
     // The other user's snapshot must not leak into our history.
     queries::snapshots::upsert(
-        &pool,
+        &mut *pool.acquire().await?,
         other.id,
         date("2026-01-01"),
         "total",
@@ -342,7 +371,8 @@ async fn snapshots_upsert_idempotent_and_history_ordered_per_user(
     )
     .await?;
 
-    let history = queries::snapshots::history(&pool, user.id, "total").await?;
+    let history =
+        queries::snapshots::history(&mut *pool.acquire().await?, user.id, "total").await?;
     assert_eq!(
         history.len(),
         2,
@@ -356,11 +386,13 @@ async fn snapshots_upsert_idempotent_and_history_ordered_per_user(
     assert_eq!(history[1].cost_basis, dec!(900));
 
     // Scope filters: the "retirement" row doesn't appear in "total" history.
-    let retirement = queries::snapshots::history(&pool, user.id, "retirement").await?;
+    let retirement =
+        queries::snapshots::history(&mut *pool.acquire().await?, user.id, "retirement").await?;
     assert_eq!(retirement.len(), 1);
     assert_eq!(retirement[0].market_value, dec!(200));
 
-    let other_history = queries::snapshots::history(&pool, other.id, "total").await?;
+    let other_history =
+        queries::snapshots::history(&mut *pool.acquire().await?, other.id, "total").await?;
     assert_eq!(other_history.len(), 1, "history is scoped per user");
     assert_eq!(other_history[0].market_value, dec!(9999));
     Ok(())
@@ -372,7 +404,7 @@ async fn alerts_dedup_until_read(pool: PgPool) -> sqlx::Result<()> {
     let payload = serde_json::json!({"saving": 100});
 
     let first = queries::alerts::create_if_absent(
-        &pool,
+        &mut *pool.acquire().await?,
         user.id,
         "harvestable_loss",
         None,
@@ -384,7 +416,7 @@ async fn alerts_dedup_until_read(pool: PgPool) -> sqlx::Result<()> {
     assert!(first.is_some(), "first alert is created");
 
     let dup = queries::alerts::create_if_absent(
-        &pool,
+        &mut *pool.acquire().await?,
         user.id,
         "harvestable_loss",
         None,
@@ -396,9 +428,11 @@ async fn alerts_dedup_until_read(pool: PgPool) -> sqlx::Result<()> {
     assert!(dup.is_none(), "duplicate unread alert is suppressed");
 
     // Once read, the same condition can alert again.
-    assert!(queries::alerts::mark_read(&pool, user.id, first.unwrap().id).await?);
+    assert!(
+        queries::alerts::mark_read(&mut *pool.acquire().await?, user.id, first.unwrap().id).await?
+    );
     let again = queries::alerts::create_if_absent(
-        &pool,
+        &mut *pool.acquire().await?,
         user.id,
         "harvestable_loss",
         None,
@@ -409,15 +443,25 @@ async fn alerts_dedup_until_read(pool: PgPool) -> sqlx::Result<()> {
     .await?;
     assert!(again.is_some());
 
-    assert_eq!(queries::alerts::list(&pool, user.id, false).await?.len(), 2);
-    assert_eq!(queries::alerts::list(&pool, user.id, true).await?.len(), 1);
+    assert_eq!(
+        queries::alerts::list(&mut *pool.acquire().await?, user.id, false)
+            .await?
+            .len(),
+        2
+    );
+    assert_eq!(
+        queries::alerts::list(&mut *pool.acquire().await?, user.id, true)
+            .await?
+            .len(),
+        1
+    );
     Ok(())
 }
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn delete_plaid_item_cascades_and_is_user_scoped(pool: PgPool) -> sqlx::Result<()> {
     let sec = queries::securities::upsert(
-        &pool,
+        &mut *pool.acquire().await?,
         "sec_1",
         Some("AAPL"),
         None,
@@ -433,7 +477,7 @@ async fn delete_plaid_item_cascades_and_is_user_scoped(pool: PgPool) -> sqlx::Re
 
     // Alice connected the same institution twice (the duplicate); Bob once.
     let dup = queries::plaid_items::upsert(
-        &pool,
+        &mut *pool.acquire().await?,
         alice.id,
         "item_dup",
         b"enc",
@@ -442,7 +486,7 @@ async fn delete_plaid_item_cascades_and_is_user_scoped(pool: PgPool) -> sqlx::Re
     )
     .await?;
     let keep = queries::plaid_items::upsert(
-        &pool,
+        &mut *pool.acquire().await?,
         alice.id,
         "item_keep",
         b"enc",
@@ -450,12 +494,18 @@ async fn delete_plaid_item_cascades_and_is_user_scoped(pool: PgPool) -> sqlx::Re
         "test_app",
     )
     .await?;
-    let bob_item =
-        queries::plaid_items::upsert(&pool, bob.id, "item_bob", b"enc", Some("ins_1"), "test_app")
-            .await?;
+    let bob_item = queries::plaid_items::upsert(
+        &mut *pool.acquire().await?,
+        bob.id,
+        "item_bob",
+        b"enc",
+        Some("ins_1"),
+        "test_app",
+    )
+    .await?;
 
     let dup_acct = queries::accounts::upsert(
-        &pool,
+        &mut *pool.acquire().await?,
         alice.id,
         dup.id,
         "acct_dup",
@@ -467,7 +517,7 @@ async fn delete_plaid_item_cascades_and_is_user_scoped(pool: PgPool) -> sqlx::Re
     )
     .await?;
     let keep_acct = queries::accounts::upsert(
-        &pool,
+        &mut *pool.acquire().await?,
         alice.id,
         keep.id,
         "acct_keep",
@@ -481,7 +531,7 @@ async fn delete_plaid_item_cascades_and_is_user_scoped(pool: PgPool) -> sqlx::Re
 
     // A lot under the duplicate connection's account — must cascade away.
     queries::tax_lots::replace_for_user(
-        &pool,
+        &mut *pool.acquire().await?,
         alice.id,
         &[db::queries::tax_lots::NewLot {
             account_id: dup_acct,
@@ -497,34 +547,42 @@ async fn delete_plaid_item_cascades_and_is_user_scoped(pool: PgPool) -> sqlx::Re
 
     // Bob can't delete Alice's connection (user-scoped): no rows affected.
     assert_eq!(
-        queries::plaid_items::delete(&pool, bob.id, dup.id).await?,
+        queries::plaid_items::delete(&mut *pool.acquire().await?, bob.id, dup.id).await?,
         0
     );
-    assert!(queries::plaid_items::find_by_id(&pool, alice.id, dup.id)
-        .await?
-        .is_some());
+    assert!(
+        queries::plaid_items::find_by_id(&mut *pool.acquire().await?, alice.id, dup.id)
+            .await?
+            .is_some()
+    );
 
     // Alice removes the duplicate.
     assert_eq!(
-        queries::plaid_items::delete(&pool, alice.id, dup.id).await?,
+        queries::plaid_items::delete(&mut *pool.acquire().await?, alice.id, dup.id).await?,
         1
     );
 
     // Its account and lot cascaded away; the other connection is untouched.
-    let accounts = queries::accounts::list(&pool, alice.id).await?;
+    let accounts = queries::accounts::list(&mut *pool.acquire().await?, alice.id).await?;
     assert_eq!(accounts.len(), 1);
     assert_eq!(accounts[0].id, keep_acct);
-    assert!(queries::tax_lots::list_with_security(&pool, alice.id)
-        .await?
-        .is_empty());
-    assert!(queries::plaid_items::find_by_id(&pool, alice.id, dup.id)
-        .await?
-        .is_none());
+    assert!(
+        queries::tax_lots::list_with_security(&mut *pool.acquire().await?, alice.id)
+            .await?
+            .is_empty()
+    );
+    assert!(
+        queries::plaid_items::find_by_id(&mut *pool.acquire().await?, alice.id, dup.id)
+            .await?
+            .is_none()
+    );
 
     // Bob's connection is entirely unaffected.
-    assert!(queries::plaid_items::find_by_id(&pool, bob.id, bob_item.id)
-        .await?
-        .is_some());
+    assert!(
+        queries::plaid_items::find_by_id(&mut *pool.acquire().await?, bob.id, bob_item.id)
+            .await?
+            .is_some()
+    );
     Ok(())
 }
 
@@ -533,7 +591,7 @@ async fn balance_only_accounts_are_those_with_balance_and_no_open_lots(
     pool: PgPool,
 ) -> sqlx::Result<()> {
     let sec = queries::securities::upsert(
-        &pool,
+        &mut *pool.acquire().await?,
         "sec_1",
         Some("AAPL"),
         None,
@@ -545,13 +603,19 @@ async fn balance_only_accounts_are_those_with_balance_and_no_open_lots(
     )
     .await?;
     let user = queries::users::create(&pool, "u@example.com", "hash").await?;
-    let item =
-        queries::plaid_items::upsert(&pool, user.id, "item", b"enc", Some("ins_1"), "test_app")
-            .await?;
+    let item = queries::plaid_items::upsert(
+        &mut *pool.acquire().await?,
+        user.id,
+        "item",
+        b"enc",
+        Some("ins_1"),
+        "test_app",
+    )
+    .await?;
 
     // A: has a balance AND an open lot → NOT balance-only (valued from lots).
     let a = queries::accounts::upsert(
-        &pool,
+        &mut *pool.acquire().await?,
         user.id,
         item.id,
         "a",
@@ -563,7 +627,7 @@ async fn balance_only_accounts_are_those_with_balance_and_no_open_lots(
     )
     .await?;
     queries::tax_lots::replace_for_user(
-        &pool,
+        &mut *pool.acquire().await?,
         user.id,
         &[db::queries::tax_lots::NewLot {
             account_id: a,
@@ -579,7 +643,7 @@ async fn balance_only_accounts_are_those_with_balance_and_no_open_lots(
 
     // B: has a balance and NO lots → balance-only (e.g. BrokerageLink).
     queries::accounts::upsert(
-        &pool,
+        &mut *pool.acquire().await?,
         user.id,
         item.id,
         "b",
@@ -593,7 +657,7 @@ async fn balance_only_accounts_are_those_with_balance_and_no_open_lots(
 
     // C: no balance and no lots → excluded (can't value it).
     queries::accounts::upsert(
-        &pool,
+        &mut *pool.acquire().await?,
         user.id,
         item.id,
         "c",
@@ -605,7 +669,7 @@ async fn balance_only_accounts_are_those_with_balance_and_no_open_lots(
     )
     .await?;
 
-    let bo = queries::accounts::balance_only_accounts(&pool, user.id).await?;
+    let bo = queries::accounts::balance_only_accounts(&mut *pool.acquire().await?, user.id).await?;
     assert_eq!(bo.len(), 1, "only the balance+no-lots account qualifies");
     assert_eq!(bo[0].name, "BrokerageLink");
     assert_eq!(bo[0].current_balance, dec!(469949.69));

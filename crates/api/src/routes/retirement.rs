@@ -26,7 +26,8 @@ pub fn router() -> Router<AppState> {
 
 /// `GET /api/retirement`
 async fn summary(State(state): State<AppState>, user: AuthUser) -> Result<Json<Value>, AppError> {
-    let lots = db::queries::tax_lots::list_open_with_account(&state.db, user.0.id).await?;
+    let mut tx = db::begin_as_user(&state.db, user.0.id).await?;
+    let lots = db::queries::tax_lots::list_open_with_account(&mut tx, user.0.id).await?;
 
     // Per-account aggregates + the IRR cash-flow series (each lot's cost is an
     // outflow on its acquisition date).
@@ -73,7 +74,7 @@ async fn summary(State(state): State<AppState>, user: AuthUser) -> Result<Json<V
     let irr = performance::xirr(&flows);
 
     // Time-weighted return from the retirement value history (accrues daily).
-    let history = db::queries::snapshots::history(&state.db, user.0.id, "retirement").await?;
+    let history = db::queries::snapshots::history(&mut tx, user.0.id, "retirement").await?;
     let twr_points: Vec<TwrPoint> = history
         .iter()
         .map(|s| TwrPoint {
@@ -95,13 +96,14 @@ async fn summary(State(state): State<AppState>, user: AuthUser) -> Result<Json<V
     // Retirement accounts valued from Plaid's balance (holdings unavailable, so no
     // lots). They count toward the total *value* but not the return metrics —
     // without cost basis or a value history we can't attribute a return to them.
-    let balance_only: Vec<_> = db::queries::accounts::balance_only_accounts(&state.db, user.0.id)
+    let balance_only: Vec<_> = db::queries::accounts::balance_only_accounts(&mut tx, user.0.id)
         .await?
         .into_iter()
         .filter(|a| {
             AccountKind::resolve(a.subtype.as_deref(), a.kind_override.as_deref()).is_retirement()
         })
         .collect();
+    tx.commit().await?;
     let balance_only_value: Decimal = balance_only.iter().map(|a| a.current_balance).sum();
 
     let mut account_rows: Vec<Value> = accounts

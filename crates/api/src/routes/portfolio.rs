@@ -61,7 +61,9 @@ async fn list_accounts(
     State(state): State<AppState>,
     user: AuthUser,
 ) -> Result<Json<Value>, AppError> {
-    let accounts = db::queries::accounts::list(&state.db, user.0.id).await?;
+    let mut tx = db::begin_as_user(&state.db, user.0.id).await?;
+    let accounts = db::queries::accounts::list(&mut tx, user.0.id).await?;
+    tx.commit().await?;
     // Tag each account taxable vs retirement (derived from its Plaid subtype).
     let enriched: Vec<Value> = accounts
         .iter()
@@ -84,7 +86,8 @@ async fn list_account_lots(
     State(state): State<AppState>,
     user: AuthUser,
 ) -> Result<Json<Value>, AppError> {
-    let lots = db::queries::tax_lots::list_open_with_account(&state.db, user.0.id).await?;
+    let mut tx = db::begin_as_user(&state.db, user.0.id).await?;
+    let lots = db::queries::tax_lots::list_open_with_account(&mut tx, user.0.id).await?;
     // A lot held for under a year is short-term; the boundary is exactly one
     // year before today.
     let one_year_ago = Utc::now().date_naive() - Duration::days(365);
@@ -122,26 +125,26 @@ async fn list_account_lots(
     // Accounts with no lots that we value from Plaid's balance (holdings
     // unavailable). Returned alongside the lots so the page can show them as
     // value-only cards rather than dropping them.
-    let balance_only: Vec<Value> =
-        db::queries::accounts::balance_only_accounts(&state.db, user.0.id)
-            .await?
-            .into_iter()
-            .map(|a| {
-                let kind = domain::accounts::AccountKind::resolve(
-                    a.subtype.as_deref(),
-                    a.kind_override.as_deref(),
-                )
-                .as_str();
-                json!({
-                    "account_id": a.account_id,
-                    "name": a.name,
-                    "subtype": a.subtype,
-                    "kind": kind,
-                    "kind_override": a.kind_override,
-                    "current_balance": a.current_balance,
-                })
+    let balance_only: Vec<Value> = db::queries::accounts::balance_only_accounts(&mut tx, user.0.id)
+        .await?
+        .into_iter()
+        .map(|a| {
+            let kind = domain::accounts::AccountKind::resolve(
+                a.subtype.as_deref(),
+                a.kind_override.as_deref(),
+            )
+            .as_str();
+            json!({
+                "account_id": a.account_id,
+                "name": a.name,
+                "subtype": a.subtype,
+                "kind": kind,
+                "kind_override": a.kind_override,
+                "current_balance": a.current_balance,
             })
-            .collect();
+        })
+        .collect();
+    tx.commit().await?;
 
     Ok(Json(json!({ "lots": lots, "balance_only": balance_only })))
 }
@@ -174,10 +177,12 @@ async fn set_account_kind(
         }
     }
 
+    let mut tx = db::begin_as_user(&state.db, user.0.id).await?;
     let updated =
-        db::queries::accounts::set_kind_override(&state.db, user.0.id, id, req.kind.as_deref())
+        db::queries::accounts::set_kind_override(&mut tx, user.0.id, id, req.kind.as_deref())
             .await?
             .ok_or(AppError::NotFound)?;
+    tx.commit().await?;
 
     let kind = domain::accounts::AccountKind::resolve(
         updated.subtype.as_deref(),
@@ -194,7 +199,9 @@ async fn list_holdings(
     State(state): State<AppState>,
     user: AuthUser,
 ) -> Result<Json<Value>, AppError> {
-    let holdings = db::queries::holdings::list_with_security(&state.db, user.0.id).await?;
+    let mut tx = db::begin_as_user(&state.db, user.0.id).await?;
+    let holdings = db::queries::holdings::list_with_security(&mut tx, user.0.id).await?;
+    tx.commit().await?;
     Ok(Json(json!({ "holdings": holdings })))
 }
 
@@ -209,12 +216,16 @@ async fn list_transactions(
     Query(q): Query<TxnQuery>,
 ) -> Result<Json<Value>, AppError> {
     let limit = q.limit.unwrap_or(DEFAULT_TXN_LIMIT).clamp(1, MAX_TXN_LIMIT);
-    let transactions = db::queries::transactions::list(&state.db, user.0.id, limit).await?;
+    let mut tx = db::begin_as_user(&state.db, user.0.id).await?;
+    let transactions = db::queries::transactions::list(&mut tx, user.0.id, limit).await?;
+    tx.commit().await?;
     Ok(Json(json!({ "transactions": transactions })))
 }
 
 async fn list_lots(State(state): State<AppState>, user: AuthUser) -> Result<Json<Value>, AppError> {
-    let lots = db::queries::tax_lots::list_with_security(&state.db, user.0.id).await?;
+    let mut tx = db::begin_as_user(&state.db, user.0.id).await?;
+    let lots = db::queries::tax_lots::list_with_security(&mut tx, user.0.id).await?;
+    tx.commit().await?;
     Ok(Json(json!({ "lots": lots })))
 }
 
@@ -222,7 +233,9 @@ async fn rebuild_lots(
     State(state): State<AppState>,
     user: AuthUser,
 ) -> Result<Json<Value>, AppError> {
-    let count = crate::lots::rebuild_lots(&state.db, user.0.id).await?;
+    let mut tx = db::begin_as_user(&state.db, user.0.id).await?;
+    let count = crate::lots::rebuild_lots(&mut tx, user.0.id).await?;
+    tx.commit().await?;
     Ok(Json(json!({ "rebuilt": count })))
 }
 
@@ -230,6 +243,8 @@ async fn portfolio_history(
     State(state): State<AppState>,
     user: AuthUser,
 ) -> Result<Json<Value>, AppError> {
-    let history = db::queries::snapshots::history(&state.db, user.0.id, "total").await?;
+    let mut tx = db::begin_as_user(&state.db, user.0.id).await?;
+    let history = db::queries::snapshots::history(&mut tx, user.0.id, "total").await?;
+    tx.commit().await?;
     Ok(Json(json!({ "history": history })))
 }

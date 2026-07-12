@@ -32,10 +32,11 @@ pub async fn evaluate_and_store_for_user(state: &AppState, user: &User) -> anyho
     let status = domain::FilingStatus::from_db_str(&user.filing_status);
     let as_of = Utc::now().date_naive();
 
-    let lots = db::queries::tax_lots::list_open_with_price(&state.db, user.id).await?;
+    let mut tx = db::begin_as_user(&state.db, user.id).await?;
+    let lots = db::queries::tax_lots::list_open_with_price(&mut tx, user.id).await?;
     let since = as_of - Duration::days(WASH_SALE_DAYS);
     let recent_buys: HashSet<Uuid> =
-        db::queries::transactions::recent_buy_security_ids(&state.db, user.id, since)
+        db::queries::transactions::recent_buy_security_ids(&mut tx, user.id, since)
             .await?
             .into_iter()
             .collect();
@@ -66,7 +67,7 @@ pub async fn evaluate_and_store_for_user(state: &AppState, user: &User) -> anyho
     for candidate in &candidates {
         let payload = serde_json::to_value(candidate)?;
         let inserted = db::queries::alerts::create_if_absent(
-            &state.db,
+            &mut tx,
             user.id,
             candidate.kind.as_str(),
             Some(candidate.security_id),
@@ -79,6 +80,7 @@ pub async fn evaluate_and_store_for_user(state: &AppState, user: &User) -> anyho
             created += 1;
         }
     }
+    tx.commit().await?;
     tracing::info!(user = %user.id, created, evaluated = candidates.len(), "alerts evaluated");
     Ok(created)
 }
@@ -90,7 +92,9 @@ pub async fn send_pending_emails_for_user(state: &AppState, user: &User) -> anyh
     let Some(smtp) = state.config.smtp.as_ref() else {
         return Ok(0);
     };
-    let pending = db::queries::alerts::list_unemailed(&state.db, user.id).await?;
+    let mut tx = db::begin_as_user(&state.db, user.id).await?;
+    let pending = db::queries::alerts::list_unemailed(&mut tx, user.id).await?;
+    tx.commit().await?;
     if pending.is_empty() {
         return Ok(0);
     }
@@ -100,12 +104,15 @@ pub async fn send_pending_emails_for_user(state: &AppState, user: &User) -> anyh
         body.push_str(&format!("• {}\n  {}\n\n", a.title, a.message));
     }
     let subject = format!("Squirrel: {} new alert(s)", pending.len());
-    // Recipient is the user's own email — not a global ALERT_EMAIL_TO.
+    // Recipient is the user's own email — not a global ALERT_EMAIL_TO. Sent
+    // outside a DB transaction so a slow SMTP server can't pin a connection.
     crate::email::send(smtp, &user.email, &subject, body).await?;
 
+    let mut tx = db::begin_as_user(&state.db, user.id).await?;
     for a in &pending {
-        db::queries::alerts::mark_emailed(&state.db, a.id).await?;
+        db::queries::alerts::mark_emailed(&mut tx, a.id).await?;
     }
+    tx.commit().await?;
     tracing::info!(user = %user.id, sent = pending.len(), "alert email sent");
     Ok(pending.len())
 }
@@ -117,7 +124,8 @@ pub async fn record_snapshot_for_user(state: &AppState, user: &User) -> anyhow::
     use domain::accounts::AccountKind;
     let today = Utc::now().date_naive();
     // Per-account lot view so we can split by account kind and snapshot each scope.
-    let lots = db::queries::tax_lots::list_open_with_account(&state.db, user.id).await?;
+    let mut tx = db::begin_as_user(&state.db, user.id).await?;
+    let lots = db::queries::tax_lots::list_open_with_account(&mut tx, user.id).await?;
 
     // (market_value, cost_basis) per scope.
     let mut total = (Decimal::ZERO, Decimal::ZERO);
@@ -149,7 +157,7 @@ pub async fn record_snapshot_for_user(state: &AppState, user: &User) -> anyhow::
 
     // Accounts valued from Plaid's balance (no lots) add to market value only.
     // Debt accounts are liabilities, so they're excluded.
-    for a in db::queries::accounts::balance_only_accounts(&state.db, user.id).await? {
+    for a in db::queries::accounts::balance_only_accounts(&mut tx, user.id).await? {
         let kind = AccountKind::resolve(a.subtype.as_deref(), a.kind_override.as_deref());
         if kind.is_debt() {
             continue;
@@ -168,8 +176,9 @@ pub async fn record_snapshot_for_user(state: &AppState, user: &User) -> anyhow::
         ("retirement", retirement),
         ("taxable", taxable),
     ] {
-        db::queries::snapshots::upsert(&state.db, user.id, today, scope, mv, cb).await?;
+        db::queries::snapshots::upsert(&mut tx, user.id, today, scope, mv, cb).await?;
     }
+    tx.commit().await?;
     Ok(())
 }
 
@@ -181,11 +190,20 @@ pub async fn run_cycle_for_user(state: &AppState, user: &User) -> anyhow::Result
     // 1. Refresh prices by re-syncing each of the user's items (Plaid permitting).
     if state.plaid.is_configured() {
         if let Some(key) = state.config.token_encryption_key {
-            let items = db::queries::plaid_items::list_for_user(&state.db, user.id).await?;
+            let mut tx = db::begin_as_user(&state.db, user.id).await?;
+            let items = db::queries::plaid_items::list_for_user(&mut tx, user.id).await?;
+            tx.commit().await?;
             for item in &items {
                 let client = state.plaid.for_item(item.plaid_client_id.as_deref());
-                match crate::sync::sync_item(&state.db, client, &key, item).await {
-                    Ok(_) => summary.items_synced += 1,
+                // Each item's sync gets its own tenant transaction (scoped to the
+                // owner) so the Plaid network round-trips don't pin one for the
+                // whole loop.
+                let mut tx = db::begin_as_user(&state.db, user.id).await?;
+                match crate::sync::sync_item(&mut tx, client, &key, item).await {
+                    Ok(_) => {
+                        tx.commit().await?;
+                        summary.items_synced += 1;
+                    }
                     Err(e) => {
                         tracing::error!(error = %e, item = %item.plaid_item_id, "scheduled sync failed")
                     }

@@ -2,7 +2,7 @@
 //! email delivery.
 
 use serde_json::Value;
-use sqlx::PgPool;
+use sqlx::PgConnection;
 use uuid::Uuid;
 
 use crate::models::Alert;
@@ -12,7 +12,7 @@ use crate::models::Alert;
 /// standing condition. Returns the new row, or `None` if a duplicate suppressed it.
 #[allow(clippy::too_many_arguments)]
 pub async fn create_if_absent(
-    pool: &PgPool,
+    conn: &mut PgConnection,
     user_id: Uuid,
     alert_type: &str,
     security_id: Option<Uuid>,
@@ -39,12 +39,16 @@ pub async fn create_if_absent(
     .bind(title)
     .bind(message)
     .bind(payload)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *conn)
     .await
 }
 
 /// List a user's alerts, newest first; optionally only the unread ones.
-pub async fn list(pool: &PgPool, user_id: Uuid, unread_only: bool) -> sqlx::Result<Vec<Alert>> {
+pub async fn list(
+    conn: &mut PgConnection,
+    user_id: Uuid,
+    unread_only: bool,
+) -> sqlx::Result<Vec<Alert>> {
     let sql = if unread_only {
         "SELECT * FROM alerts WHERE user_id = $1 AND read_at IS NULL ORDER BY created_at DESC"
     } else {
@@ -52,36 +56,36 @@ pub async fn list(pool: &PgPool, user_id: Uuid, unread_only: bool) -> sqlx::Resu
     };
     sqlx::query_as::<_, Alert>(sql)
         .bind(user_id)
-        .fetch_all(pool)
+        .fetch_all(&mut *conn)
         .await
 }
 
 /// Mark one alert read; returns whether it changed a row (false if missing/already read).
-pub async fn mark_read(pool: &PgPool, user_id: Uuid, id: Uuid) -> sqlx::Result<bool> {
+pub async fn mark_read(conn: &mut PgConnection, user_id: Uuid, id: Uuid) -> sqlx::Result<bool> {
     let result = sqlx::query(
         "UPDATE alerts SET read_at = now() WHERE id = $1 AND user_id = $2 AND read_at IS NULL",
     )
     .bind(id)
     .bind(user_id)
-    .execute(pool)
+    .execute(&mut *conn)
     .await?;
     Ok(result.rows_affected() > 0)
 }
 
 /// Alerts not yet emailed (for the digest sender).
-pub async fn list_unemailed(pool: &PgPool, user_id: Uuid) -> sqlx::Result<Vec<Alert>> {
+pub async fn list_unemailed(conn: &mut PgConnection, user_id: Uuid) -> sqlx::Result<Vec<Alert>> {
     sqlx::query_as::<_, Alert>(
         "SELECT * FROM alerts WHERE user_id = $1 AND emailed_at IS NULL ORDER BY created_at",
     )
     .bind(user_id)
-    .fetch_all(pool)
+    .fetch_all(&mut *conn)
     .await
 }
 
-pub async fn mark_emailed(pool: &PgPool, id: Uuid) -> sqlx::Result<()> {
+pub async fn mark_emailed(conn: &mut PgConnection, id: Uuid) -> sqlx::Result<()> {
     sqlx::query("UPDATE alerts SET emailed_at = now() WHERE id = $1")
         .bind(id)
-        .execute(pool)
+        .execute(&mut *conn)
         .await?;
     Ok(())
 }

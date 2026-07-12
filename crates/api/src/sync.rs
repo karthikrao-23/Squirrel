@@ -16,7 +16,7 @@ use plaid::transactions::MAX_PAGE_SIZE;
 use plaid::PlaidClient;
 use rust_decimal::Decimal;
 use serde::Serialize;
-use sqlx::PgPool;
+use sqlx::PgConnection;
 use uuid::Uuid;
 
 /// Plaid investment transactions go back at most 24 months.
@@ -98,12 +98,12 @@ fn aggregate_holdings(rows: Vec<HoldingRow>) -> Vec<(Uuid, Uuid, PositionAgg)> {
 
 /// Upsert one security and remember its UUID keyed by Plaid's security id.
 async fn upsert_security(
-    pool: &PgPool,
+    conn: &mut PgConnection,
     map: &mut HashMap<String, Uuid>,
     s: &PlaidSecurity,
 ) -> anyhow::Result<()> {
     let id = db::queries::securities::upsert(
-        pool,
+        &mut *conn,
         &s.security_id,
         s.ticker_symbol.as_deref(),
         s.name.as_deref(),
@@ -120,7 +120,7 @@ async fn upsert_security(
 
 /// Sync a single item end-to-end and return a count summary.
 pub async fn sync_item(
-    pool: &PgPool,
+    conn: &mut PgConnection,
     plaid: &PlaidClient,
     key: &[u8; 32],
     item: &PlaidItem,
@@ -133,19 +133,19 @@ pub async fn sync_item(
     let holdings = plaid.get_holdings(&access_token).await?;
 
     if let Some(inst) = holdings.item.institution_id.as_deref() {
-        db::queries::plaid_items::set_institution_id(pool, item.id, inst).await?;
+        db::queries::plaid_items::set_institution_id(&mut *conn, item.id, inst).await?;
     }
 
     let mut sec_map: HashMap<String, Uuid> = HashMap::new();
     for s in &holdings.securities {
-        upsert_security(pool, &mut sec_map, s).await?;
+        upsert_security(&mut *conn, &mut sec_map, s).await?;
     }
     summary.securities = sec_map.len();
 
     let mut acct_map: HashMap<String, Uuid> = HashMap::new();
     for a in &holdings.accounts {
         let id = db::queries::accounts::upsert(
-            pool,
+            &mut *conn,
             item.user_id,
             item.id,
             &a.account_id,
@@ -188,7 +188,7 @@ pub async fn sync_item(
     }
     for (account_id, security_id, agg) in aggregate_holdings(rows) {
         db::queries::holdings::upsert(
-            pool,
+            &mut *conn,
             item.user_id,
             account_id,
             security_id,
@@ -215,7 +215,7 @@ pub async fn sync_item(
         // Transactions can reference securities not in the holdings snapshot.
         for s in &page.securities {
             if !sec_map.contains_key(&s.security_id) {
-                upsert_security(pool, &mut sec_map, s).await?;
+                upsert_security(&mut *conn, &mut sec_map, s).await?;
             }
         }
 
@@ -231,7 +231,7 @@ pub async fn sync_item(
                 .and_then(|sid| sec_map.get(sid).copied());
 
             let inserted = db::queries::transactions::insert_ignore(
-                pool,
+                &mut *conn,
                 &db::queries::transactions::NewTransaction {
                     user_id: item.user_id,
                     account_id,
@@ -263,7 +263,7 @@ pub async fn sync_item(
 
     // Transactions changed, so derived tax lots are stale — rebuild them for the
     // item's owner (never a default/global user).
-    crate::lots::rebuild_lots(pool, item.user_id).await?;
+    crate::lots::rebuild_lots(&mut *conn, item.user_id).await?;
 
     tracing::info!(?summary, item = %item.plaid_item_id, "sync complete");
     Ok(summary)

@@ -1,16 +1,16 @@
 //! Account queries. Upserts on Plaid's account id so re-syncs are idempotent.
 
 use rust_decimal::Decimal;
-use sqlx::{FromRow, PgPool};
+use sqlx::{FromRow, PgConnection};
 use uuid::Uuid;
 
 use crate::models::Account;
 
 /// All accounts owned by the user, ordered by name.
-pub async fn list(pool: &PgPool, user_id: Uuid) -> sqlx::Result<Vec<Account>> {
+pub async fn list(conn: &mut PgConnection, user_id: Uuid) -> sqlx::Result<Vec<Account>> {
     sqlx::query_as::<_, Account>("SELECT * FROM accounts WHERE user_id = $1 ORDER BY name")
         .bind(user_id)
-        .fetch_all(pool)
+        .fetch_all(&mut *conn)
         .await
 }
 
@@ -20,7 +20,7 @@ pub async fn list(pool: &PgPool, user_id: Uuid) -> sqlx::Result<Vec<Account>> {
 /// the caller's own account. Returns the updated row, or `None` if no account
 /// with that id belongs to the user.
 pub async fn set_kind_override(
-    pool: &PgPool,
+    conn: &mut PgConnection,
     user_id: Uuid,
     account_id: Uuid,
     kind: Option<&str>,
@@ -36,13 +36,13 @@ pub async fn set_kind_override(
     .bind(user_id)
     .bind(account_id)
     .bind(kind)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *conn)
     .await
 }
 
 #[allow(clippy::too_many_arguments)]
 pub async fn upsert(
-    pool: &PgPool,
+    conn: &mut PgConnection,
     user_id: Uuid,
     plaid_item_id: Uuid,
     plaid_account_id: &str,
@@ -75,7 +75,7 @@ pub async fn upsert(
     .bind(account_type)
     .bind(subtype)
     .bind(current_balance)
-    .fetch_one(pool)
+    .fetch_one(&mut *conn)
     .await
 }
 
@@ -94,7 +94,7 @@ pub struct BalanceOnlyAccount {
 /// value comes from the balance, not from reconstructed positions. Used to fold
 /// holdings-unavailable accounts into the portfolio/retirement totals.
 pub async fn balance_only_accounts(
-    pool: &PgPool,
+    conn: &mut PgConnection,
     user_id: Uuid,
 ) -> sqlx::Result<Vec<BalanceOnlyAccount>> {
     sqlx::query_as::<_, BalanceOnlyAccount>(
@@ -111,6 +111,6 @@ pub async fn balance_only_accounts(
         "#,
     )
     .bind(user_id)
-    .fetch_all(pool)
+    .fetch_all(&mut *conn)
     .await
 }

@@ -6,6 +6,7 @@
 //! signs up a user (via [`signup`]) and attaches the returned session cookie and
 //! the `X-Squirrel-CSRF` header to subsequent requests. Plaid is left
 //! unconfigured (those handlers return 400, covered elsewhere).
+#![allow(clippy::explicit_auto_deref)]
 
 use std::time::Instant;
 
@@ -216,12 +217,15 @@ async fn seed_lot(
     basis: rust_decimal::Decimal,
     qty: rust_decimal::Decimal,
 ) -> Uuid {
+    // Superuser test pool bypasses RLS, so a bare connection (no app.user_id) is
+    // fine here; the query fns just need a `&mut PgConnection`.
+    let mut conn = pool.acquire().await.unwrap();
     let item =
-        db::queries::plaid_items::upsert(pool, user_id, "item_seed", b"enc", None, "test_app")
+        db::queries::plaid_items::upsert(&mut conn, user_id, "item_seed", b"enc", None, "test_app")
             .await
             .unwrap();
     let acct = db::queries::accounts::upsert(
-        pool,
+        &mut conn,
         user_id,
         item.id,
         "acct_seed",
@@ -234,7 +238,7 @@ async fn seed_lot(
     .await
     .unwrap();
     let sec = db::queries::securities::upsert(
-        pool,
+        &mut conn,
         &format!("sec_{ticker}"),
         Some(ticker),
         None,
@@ -247,7 +251,7 @@ async fn seed_lot(
     .await
     .unwrap();
     db::queries::tax_lots::replace_for_user(
-        pool,
+        &mut conn,
         user_id,
         &[db::queries::tax_lots::NewLot {
             account_id: acct,
@@ -261,7 +265,7 @@ async fn seed_lot(
     )
     .await
     .unwrap();
-    let lots = db::queries::tax_lots::list_with_security(pool, user_id)
+    let lots = db::queries::tax_lots::list_with_security(&mut conn, user_id)
         .await
         .unwrap();
     lots[0].id
@@ -809,7 +813,7 @@ async fn link_token_is_rejected_when_all_plaid_apps_are_full(pool: PgPool) {
 
     for i in 0..2 {
         db::queries::plaid_items::upsert(
-            &pool,
+            &mut *pool.acquire().await.unwrap(),
             user_id,
             &format!("item_{i}"),
             b"enc",
@@ -837,11 +841,18 @@ async fn debt_account_is_excluded_from_portfolio_value(pool: PgPool) {
     let app = app(pool.clone());
     let (cookie, user_id) = auth(&app, "debt@example.com").await;
     // A balance-only account (Plaid balance, no lots) — e.g. a margin loan.
-    let item = db::queries::plaid_items::upsert(&pool, user_id, "item_debt", b"enc", None, "app1")
-        .await
-        .unwrap();
+    let item = db::queries::plaid_items::upsert(
+        &mut *pool.acquire().await.unwrap(),
+        user_id,
+        "item_debt",
+        b"enc",
+        None,
+        "app1",
+    )
+    .await
+    .unwrap();
     let acct = db::queries::accounts::upsert(
-        &pool,
+        &mut *pool.acquire().await.unwrap(),
         user_id,
         item.id,
         "acct_loan",
@@ -884,9 +895,16 @@ async fn removing_a_connection_records_a_capacity_tombstone(pool: PgPool) {
     // call and goes straight to local delete + tombstone (no network).
     let app = app(pool.clone());
     let (cookie, user_id) = auth(&app, "remove@example.com").await;
-    let item = db::queries::plaid_items::upsert(&pool, user_id, "item_x", b"enc", None, "app1")
-        .await
-        .unwrap();
+    let item = db::queries::plaid_items::upsert(
+        &mut *pool.acquire().await.unwrap(),
+        user_id,
+        "item_x",
+        b"enc",
+        None,
+        "app1",
+    )
+    .await
+    .unwrap();
 
     let resp = send_auth(
         &app,
@@ -900,9 +918,10 @@ async fn removing_a_connection_records_a_capacity_tombstone(pool: PgPool) {
     assert_eq!(resp.body["removed"], true);
 
     // The item row is gone, but a tombstone keeps its Plaid slot counted.
-    let counts = db::queries::plaid_items::connection_counts_by_client(&pool)
-        .await
-        .unwrap();
+    let counts =
+        db::queries::plaid_items::connection_counts_by_client(&mut *pool.acquire().await.unwrap())
+            .await
+            .unwrap();
     let app1: i64 = counts
         .iter()
         .filter(|(c, _)| c.as_deref() == Some("app1"))
@@ -924,12 +943,25 @@ async fn removed_connections_count_toward_capacity(pool: PgPool) {
     let (cookie, user_id) = auth(&app, "tombstone@example.com").await;
 
     // 1 active item + 1 removed tombstone = 2 consumed = at the cap of 2.
-    db::queries::plaid_items::upsert(&pool, user_id, "item_active", b"enc", None, "app1")
-        .await
-        .unwrap();
-    db::queries::plaid_items::record_removed(&pool, user_id, "app1", "item_gone", Some("E*Trade"))
-        .await
-        .unwrap();
+    db::queries::plaid_items::upsert(
+        &mut *pool.acquire().await.unwrap(),
+        user_id,
+        "item_active",
+        b"enc",
+        None,
+        "app1",
+    )
+    .await
+    .unwrap();
+    db::queries::plaid_items::record_removed(
+        &mut *pool.acquire().await.unwrap(),
+        user_id,
+        "app1",
+        "item_gone",
+        Some("E*Trade"),
+    )
+    .await
+    .unwrap();
 
     let resp = send_auth(&app, "POST", "/api/plaid/link-token", &cookie, json!({})).await;
     assert_eq!(resp.status, StatusCode::BAD_REQUEST, "{:?}", resp.body);
@@ -988,7 +1020,7 @@ async fn user_a_cannot_read_or_mutate_user_b(pool: PgPool) {
     // B has a loss lot (harvestable) and an alert; A has nothing.
     let b_lot = seed_lot(&pool, b, "BONLY", dec!(50), dec!(200), dec!(100)).await;
     let b_alert = db::queries::alerts::create_if_absent(
-        &pool,
+        &mut *pool.acquire().await.unwrap(),
         b,
         "harvestable_loss",
         None,
@@ -1053,7 +1085,7 @@ async fn same_institution_two_users_keep_separate_rows(pool: PgPool) {
     // Same Plaid ids for both users.
     for uid in [a, b] {
         let item = db::queries::plaid_items::upsert(
-            &pool,
+            &mut *pool.acquire().await.unwrap(),
             uid,
             "item_shared",
             b"enc",
@@ -1063,7 +1095,7 @@ async fn same_institution_two_users_keep_separate_rows(pool: PgPool) {
         .await
         .unwrap();
         let acct = db::queries::accounts::upsert(
-            &pool,
+            &mut *pool.acquire().await.unwrap(),
             uid,
             item.id,
             "acct_shared",
@@ -1076,7 +1108,7 @@ async fn same_institution_two_users_keep_separate_rows(pool: PgPool) {
         .await
         .unwrap();
         let sec = db::queries::securities::upsert(
-            &pool,
+            &mut *pool.acquire().await.unwrap(),
             "sec_shared",
             Some("SHRD"),
             None,
@@ -1091,7 +1123,7 @@ async fn same_institution_two_users_keep_separate_rows(pool: PgPool) {
         let _ = sec;
         let _ = acct;
         db::queries::transactions::insert_ignore(
-            &pool,
+            &mut *pool.acquire().await.unwrap(),
             &db::queries::transactions::NewTransaction {
                 user_id: uid,
                 account_id: acct,

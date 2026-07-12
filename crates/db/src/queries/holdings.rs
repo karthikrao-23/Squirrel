@@ -4,7 +4,7 @@
 use chrono::NaiveDate;
 use rust_decimal::Decimal;
 use serde::Serialize;
-use sqlx::{FromRow, PgPool};
+use sqlx::{FromRow, PgConnection};
 use uuid::Uuid;
 
 /// A holding joined with its account + security, ready to serialize for the API.
@@ -36,18 +36,24 @@ pub struct Position {
 }
 
 /// Every holding's current position for a user (account, security, qty, basis, price).
-pub async fn positions_for_user(pool: &PgPool, user_id: Uuid) -> sqlx::Result<Vec<Position>> {
+pub async fn positions_for_user(
+    conn: &mut PgConnection,
+    user_id: Uuid,
+) -> sqlx::Result<Vec<Position>> {
     sqlx::query_as::<_, Position>(
         "SELECT account_id, security_id, quantity, cost_basis, institution_price
          FROM holdings WHERE user_id = $1",
     )
     .bind(user_id)
-    .fetch_all(pool)
+    .fetch_all(&mut *conn)
     .await
 }
 
 /// All holdings for the user, most valuable first.
-pub async fn list_with_security(pool: &PgPool, user_id: Uuid) -> sqlx::Result<Vec<HoldingView>> {
+pub async fn list_with_security(
+    conn: &mut PgConnection,
+    user_id: Uuid,
+) -> sqlx::Result<Vec<HoldingView>> {
     sqlx::query_as::<_, HoldingView>(
         r#"
         SELECT h.account_id, a.name AS account_name, h.security_id,
@@ -61,13 +67,13 @@ pub async fn list_with_security(pool: &PgPool, user_id: Uuid) -> sqlx::Result<Ve
         "#,
     )
     .bind(user_id)
-    .fetch_all(pool)
+    .fetch_all(&mut *conn)
     .await
 }
 
 #[allow(clippy::too_many_arguments)]
 pub async fn upsert(
-    pool: &PgPool,
+    conn: &mut PgConnection,
     user_id: Uuid,
     account_id: Uuid,
     security_id: Uuid,
@@ -103,7 +109,7 @@ pub async fn upsert(
     .bind(institution_value)
     .bind(cost_basis)
     .bind(currency)
-    .execute(pool)
+    .execute(&mut *conn)
     .await?;
     Ok(())
 }

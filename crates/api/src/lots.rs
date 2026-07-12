@@ -19,13 +19,14 @@ use db::queries::holdings::Position;
 use db::queries::tax_lots::NewLot;
 use domain::lots::{reconstruct_fifo, LotInput};
 use rust_decimal::Decimal;
-use sqlx::PgPool;
+use sqlx::PgConnection;
 use uuid::Uuid;
 
 /// Reconstruct and persist all tax lots for a user. Returns the number of open
-/// lots stored.
-pub async fn rebuild_lots(pool: &PgPool, user_id: Uuid) -> anyhow::Result<u64> {
-    let rows = db::queries::transactions::list_for_lots(pool, user_id).await?;
+/// lots stored. Runs on the caller's tenant transaction (RLS-scoped), so the
+/// read → reconcile → replace all see and write only this user's rows.
+pub async fn rebuild_lots(conn: &mut PgConnection, user_id: Uuid) -> anyhow::Result<u64> {
+    let rows = db::queries::transactions::list_for_lots(&mut *conn, user_id).await?;
 
     // Group transactions by (account, security). BTreeMap keeps a deterministic
     // order, which keeps the resulting lot rows stable across rebuilds. While we
@@ -71,7 +72,7 @@ pub async fn rebuild_lots(pool: &PgPool, user_id: Uuid) -> anyhow::Result<u64> {
         }
     }
 
-    let positions = db::queries::holdings::positions_for_user(pool, user_id).await?;
+    let positions = db::queries::holdings::positions_for_user(&mut *conn, user_id).await?;
     reconcile(
         &mut new_lots,
         &positions,
@@ -80,7 +81,7 @@ pub async fn rebuild_lots(pool: &PgPool, user_id: Uuid) -> anyhow::Result<u64> {
         Utc::now().date_naive(),
     );
 
-    let count = db::queries::tax_lots::replace_for_user(pool, user_id, &new_lots).await?;
+    let count = db::queries::tax_lots::replace_for_user(&mut *conn, user_id, &new_lots).await?;
     tracing::info!(lots = count, user = %user_id, "tax lots rebuilt");
     Ok(count)
 }
