@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useAlerts, useMarkRead } from "../api/hooks";
+import { useAlerts, useEvaluateAlerts, useMarkRead } from "../api/hooks";
 import type { Alert } from "../api/types";
 import { Card, EmptyState, ErrorState, Spinner } from "../components/ui";
 import { money, relativeTime } from "../lib/format";
@@ -20,6 +20,7 @@ export function Alerts() {
   const [unreadOnly, setUnreadOnly] = useState(false);
   const alerts = useAlerts(unreadOnly);
   const markRead = useMarkRead();
+  const evaluate = useEvaluateAlerts();
 
   return (
     <div className="app" style={{ maxWidth: 820 }}>
@@ -38,6 +39,14 @@ export function Alerts() {
           </button>
         </div>
         <span className="faint">{unreadOnly ? "?unread_only=true" : ""}</span>
+        <button
+          className="btn"
+          style={{ marginLeft: "auto" }}
+          disabled={evaluate.isPending}
+          onClick={() => evaluate.mutate()}
+        >
+          {evaluate.isPending ? "Refreshing…" : "Refresh alerts"}
+        </button>
       </div>
 
       <Card>

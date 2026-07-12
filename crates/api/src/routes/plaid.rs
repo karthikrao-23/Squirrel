@@ -109,6 +109,9 @@ async fn exchange(
     Json(body): Json<ExchangeReq>,
 ) -> Result<Json<ConnectResponse>, AppError> {
     let resp = connect_with_public_token(&state, user.0.id, &body.public_token).await?;
+    // New holdings just landed — re-evaluate alert rules now rather than waiting
+    // for the hourly cycle, so signals appear as soon as the account is connected.
+    evaluate_alerts_best_effort(&state, &user.0).await;
     Ok(Json(resp))
 }
 
@@ -131,6 +134,10 @@ async fn resync(State(state): State<AppState>, user: AuthUser) -> Result<Json<Va
         transactions += s.transactions_inserted;
     }
     tx.commit().await?;
+    // Prices/holdings just refreshed — re-evaluate alerts against the new data.
+    // (Runs after the sync tx commits so the evaluation, in its own tenant tx,
+    // sees the freshly-written rows.)
+    evaluate_alerts_best_effort(&state, &user.0).await;
     Ok(Json(json!({
         "items": items.len(),
         "accounts": accounts,
@@ -286,6 +293,7 @@ async fn sandbox_connect(
         .sandbox_public_token_create(&institution)
         .await?;
     let resp = connect_with_public_token(&state, user.0.id, &minted.public_token).await?;
+    evaluate_alerts_best_effort(&state, &user.0).await;
     Ok(Json(resp))
 }
 
@@ -334,6 +342,15 @@ async fn webhook(State(state): State<AppState>, headers: HeaderMap, body: Bytes)
 }
 
 // --- helpers ---
+
+/// Re-evaluate alert rules for a user right after their portfolio data changed
+/// (a connect or resync). Best-effort: the sync itself already succeeded and the
+/// hourly cycle re-evaluates regardless, so a failure here is logged, not fatal.
+async fn evaluate_alerts_best_effort(state: &AppState, user: &db::models::User) {
+    if let Err(e) = crate::alert_engine::evaluate_and_store_for_user(state, user).await {
+        tracing::error!(user = %user.id, error = %e, "post-sync alert evaluation failed");
+    }
+}
 
 /// Shared path for exchange + sandbox: exchange token → store encrypted item →
 /// initial sync.

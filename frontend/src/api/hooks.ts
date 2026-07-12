@@ -232,6 +232,16 @@ export function useMarkRead() {
   });
 }
 
+/** Run the alert cycle for the current user on demand, then refetch the list. */
+export function useEvaluateAlerts() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      post<{ created: number; emailed: number }>("/api/alerts/evaluate"),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["alerts"] }),
+  });
+}
+
 // ---- Onboarding (Plaid) ----
 
 /** Invalidate everything the dashboard derives from a fresh sync. */
@@ -240,6 +250,8 @@ function invalidateAfterSync(qc: ReturnType<typeof useQueryClient>) {
   qc.invalidateQueries({ queryKey: keys.holdings });
   qc.invalidateQueries({ queryKey: keys.summary });
   qc.invalidateQueries({ queryKey: keys.harvest });
+  // A sync re-evaluates alerts server-side, so refetch the list too.
+  qc.invalidateQueries({ queryKey: ["alerts"] });
 }
 
 /** Fetch a Plaid Link token (only when `enabled`). Link tokens are short-lived
