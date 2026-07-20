@@ -5,6 +5,7 @@ members = [
     "crates/domain",
     "crates/db",
     "crates/plaid",
+    "crates/broker",
 ]
 
 # Shared dependency versions are declared once here and referenced from each
@@ -48,6 +49,8 @@ chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 anyhow = "1"
 thiserror = "2"
+# Object-safe async traits (used by the provider abstraction).
+async-trait = "0.1"
 log = "0.4"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -77,3 +80,4 @@ lettre = { version = "0.11", default-features = false, features = [
 domain = { path = "crates/domain" }
 db = { path = "crates/db" }
 plaid = { path = "crates/plaid" }
+broker = { path = "crates/broker" }

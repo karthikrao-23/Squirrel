@@ -13,6 +13,7 @@ use thiserror::Error;
 pub mod holdings;
 pub mod link;
 pub mod models;
+pub mod provider;
 pub mod transactions;
 pub mod webhooks;
 

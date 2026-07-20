@@ -1,0 +1,11 @@
+[package]
+name = "broker"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+chrono = { workspace = true }
+rust_decimal = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
