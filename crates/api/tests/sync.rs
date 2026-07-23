@@ -123,6 +123,16 @@ async fn sync_item_persists_and_rebuilds_lots_via_provider(pool: PgPool) {
     assert_eq!(positions.len(), 1);
     assert_eq!(positions[0].quantity, dec!(10));
 
+    // ...and a successful sync stamped the account's last-synced time.
+    let accounts = db::queries::accounts::list(&mut conn, user.id)
+        .await
+        .unwrap();
+    assert_eq!(accounts.len(), 1);
+    assert!(
+        accounts[0].last_synced_at.is_some(),
+        "a successful sync should record last_synced_at"
+    );
+
     // ...and the buy reconstructed into exactly one open tax lot.
     let lots = db::queries::tax_lots::list_open_with_price(&mut conn, user.id)
         .await

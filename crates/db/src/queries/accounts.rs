@@ -79,6 +79,26 @@ pub async fn upsert(
     .await
 }
 
+/// Stamp every account under one item with the current time as its last
+/// successful sync. Called at the end of a sync once holdings + transactions are
+/// persisted and lots rebuilt, so `last_synced_at` reflects a fully successful
+/// refresh (not a partial one). Scoped by `user_id` as well as `plaid_item_id`
+/// for defense-in-depth alongside RLS. Returns the number of accounts stamped.
+pub async fn mark_synced(
+    conn: &mut PgConnection,
+    user_id: Uuid,
+    plaid_item_id: Uuid,
+) -> sqlx::Result<u64> {
+    let res = sqlx::query(
+        "UPDATE accounts SET last_synced_at = now() WHERE user_id = $1 AND plaid_item_id = $2",
+    )
+    .bind(user_id)
+    .bind(plaid_item_id)
+    .execute(&mut *conn)
+    .await?;
+    Ok(res.rows_affected())
+}
+
 /// An account whose value we anchor to Plaid's reported balance because it has
 /// no open lots (holdings unavailable, e.g. Fidelity BrokerageLink).
 #[derive(Debug, Clone, FromRow)]

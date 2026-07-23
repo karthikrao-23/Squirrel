@@ -249,6 +249,11 @@ pub async fn sync_item(
     // item's owner (never a default/global user).
     crate::lots::rebuild_lots(&mut *conn, item.user_id).await?;
 
+    // Everything above succeeded — record the refresh time on this item's
+    // accounts. Only the sync path writes `last_synced_at`, so it stays a
+    // trustworthy "last refreshed from the brokerage" signal for the UI.
+    db::queries::accounts::mark_synced(&mut *conn, item.user_id, item.id).await?;
+
     tracing::info!(?summary, item = %item.plaid_item_id, "sync complete");
     Ok(summary)
 }

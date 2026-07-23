@@ -54,6 +54,10 @@ export interface Account {
   current_balance: Dec | null;
   kind: AccountKind; // resolved (subtype + any override)
   kind_override: AccountKindOverride;
+  // Last successful refresh from the brokerage; null until the first sync.
+  // Written only by the sync path, so (unlike updated_at) it isn't moved by
+  // manual edits like a tax-classification change.
+  last_synced_at: IsoDateTime | null;
   created_at: IsoDateTime;
   updated_at: IsoDateTime;
 }
