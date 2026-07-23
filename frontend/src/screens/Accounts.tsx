@@ -4,6 +4,7 @@ import {
   useAccounts,
   useConnections,
   useRemoveConnection,
+  useResync,
   useSetAccountKind,
 } from "../api/hooks";
 import type {
@@ -437,6 +438,7 @@ function BalanceOnlyCard({
 export function Accounts() {
   const accountLots = useAccountLots();
   const accounts = useAccounts();
+  const resync = useResync();
   const lots = accountLots.data?.lots ?? [];
   const balanceOnly = accountLots.data?.balance_only ?? [];
   const groups = useMemo(() => groupByAccount(lots), [accountLots.data]);
@@ -450,10 +452,25 @@ export function Accounts() {
 
   return (
     <div className="app">
-      <div className="page-head">
-        <h1>Accounts</h1>
-        <p>Open tax lots held in each connected account, with per-account totals.</p>
+      <div className="page-head flex between">
+        <div>
+          <h1>Accounts</h1>
+          <p>Open tax lots held in each connected account, with per-account totals.</p>
+        </div>
+        <button
+          className="btn"
+          disabled={resync.isPending}
+          onClick={() => resync.mutate()}
+          title="Pull fresh holdings & transactions from your brokerage"
+        >
+          {resync.isPending ? "Resyncing…" : "↻ Resync"}
+        </button>
       </div>
+      {resync.isError && (
+        <div className="loss" style={{ fontSize: 13, marginBottom: 8 }}>
+          Resync failed: {(resync.error as Error).message}
+        </div>
+      )}
 
       <Connections />
 
