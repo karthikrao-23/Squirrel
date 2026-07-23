@@ -15,6 +15,9 @@ frontend/node_modules
 frontend/dist
 frontend/.vite
 
+# Local dev run logs (backend/frontend launched by run.sh)
+*.log
+
 # OS
 .DS_Store
 

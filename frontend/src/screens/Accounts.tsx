@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import {
   useAccountLots,
+  useAccounts,
   useConnections,
   useRemoveConnection,
   useSetAccountKind,
@@ -21,7 +22,7 @@ import {
   Stat,
   TermChip,
 } from "../components/ui";
-import { fmtDate, money, num, qty } from "../lib/format";
+import { fmtDate, money, num, qty, relativeTime } from "../lib/format";
 
 /** Market value of a lot = remaining shares × current price. */
 function marketValue(l: AccountLot): number {
@@ -170,6 +171,16 @@ function KindChip({ kind }: { kind: AccountKind }) {
   return <span className={`chip ${kind}`}>{KIND_LABELS[kind]}</span>;
 }
 
+/** Faint "Synced 3h ago" label from an account's last successful refresh.
+ *  `null`/absent means the account hasn't completed a sync yet. */
+function SyncBadge({ iso }: { iso?: string | null }) {
+  return (
+    <span className="faint" style={{ fontSize: 12 }} title={iso ? fmtDate(iso) : undefined}>
+      {iso ? `Synced ${relativeTime(iso)}` : "Not synced yet"}
+    </span>
+  );
+}
+
 /** Segmented Auto / Taxable / Retirement / Debt control that overrides an
  *  account's classification. "Auto" (override = null) derives the kind from
  *  Plaid's subtype; the others pin it. Debt marks a liability that's excluded
@@ -224,7 +235,13 @@ function KindControl({
   );
 }
 
-function AccountCard({ group }: { group: AccountGroup }) {
+function AccountCard({
+  group,
+  lastSyncedAt,
+}: {
+  group: AccountGroup;
+  lastSyncedAt?: string | null;
+}) {
   const [open, setOpen] = useState(false);
   const [openYears, setOpenYears] = useState<Set<string>>(new Set());
 
@@ -248,6 +265,7 @@ function AccountCard({ group }: { group: AccountGroup }) {
           <h2>{group.account_name}</h2>
           {group.account_subtype && <span className="chip">{group.account_subtype}</span>}
           <KindChip kind={group.account_kind} />
+          <SyncBadge iso={lastSyncedAt} />
         </div>
         <div className="collapse-summary">
           <span className="muted">{money(group.totalMarketValue)}</span>
@@ -381,7 +399,13 @@ function Connections() {
 
 /** An account we can't break into lots — Plaid won't share its holdings — so we
  *  show its Plaid balance as the value. */
-function BalanceOnlyCard({ account }: { account: AccountBalanceOnly }) {
+function BalanceOnlyCard({
+  account,
+  lastSyncedAt,
+}: {
+  account: AccountBalanceOnly;
+  lastSyncedAt?: string | null;
+}) {
   return (
     <Card className="mt16">
       <div className="collapse-head" style={{ cursor: "default" }}>
@@ -389,6 +413,7 @@ function BalanceOnlyCard({ account }: { account: AccountBalanceOnly }) {
           <h2>{account.name}</h2>
           {account.subtype && <span className="chip">{account.subtype}</span>}
           <KindChip kind={account.kind} />
+          <SyncBadge iso={lastSyncedAt} />
         </div>
         <div className="collapse-summary">
           <span className="num">{money(account.current_balance)}</span>
@@ -411,9 +436,17 @@ function BalanceOnlyCard({ account }: { account: AccountBalanceOnly }) {
 
 export function Accounts() {
   const accountLots = useAccountLots();
+  const accounts = useAccounts();
   const lots = accountLots.data?.lots ?? [];
   const balanceOnly = accountLots.data?.balance_only ?? [];
   const groups = useMemo(() => groupByAccount(lots), [accountLots.data]);
+
+  // Last-synced time lives on the account record (GET /api/accounts), but the
+  // cards above are built from lots / balances — so join by account id.
+  const syncedById = useMemo(
+    () => new Map((accounts.data ?? []).map((a) => [a.id, a.last_synced_at])),
+    [accounts.data],
+  );
 
   return (
     <div className="app">
@@ -442,10 +475,14 @@ export function Accounts() {
       ) : (
         <>
           {groups.map((g) => (
-            <AccountCard key={g.account_id} group={g} />
+            <AccountCard key={g.account_id} group={g} lastSyncedAt={syncedById.get(g.account_id)} />
           ))}
           {balanceOnly.map((a) => (
-            <BalanceOnlyCard key={a.account_id} account={a} />
+            <BalanceOnlyCard
+              key={a.account_id}
+              account={a}
+              lastSyncedAt={syncedById.get(a.account_id)}
+            />
           ))}
         </>
       )}

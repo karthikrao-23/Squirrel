@@ -91,6 +91,10 @@ pub struct Account {
     /// User override of the tax classification: `"taxable"` / `"retirement"`, or
     /// `None` to classify automatically from `subtype`. See `domain::AccountKind`.
     pub kind_override: Option<String>,
+    /// Last time a successful sync refreshed this account from the brokerage.
+    /// `None` until the first sync completes. Distinct from `updated_at`, which
+    /// also bumps on manual edits (e.g. a tax-classification override).
+    pub last_synced_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
