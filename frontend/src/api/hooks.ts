@@ -14,6 +14,7 @@ import type {
   Holding,
   LinkTokenResp,
   PortfolioSnapshot,
+  ResyncResponse,
   RetirementSummary,
   SimulateReq,
   SimulateResp,
@@ -246,12 +247,35 @@ export function useEvaluateAlerts() {
 
 /** Invalidate everything the dashboard derives from a fresh sync. */
 function invalidateAfterSync(qc: ReturnType<typeof useQueryClient>) {
-  qc.invalidateQueries({ queryKey: keys.accounts });
-  qc.invalidateQueries({ queryKey: keys.holdings });
-  qc.invalidateQueries({ queryKey: keys.summary });
-  qc.invalidateQueries({ queryKey: keys.harvest });
+  // A sync rewrites accounts/holdings/lots, so refresh everything derived from
+  // them: the account cards + their lots, the dashboard totals, and the
+  // retirement / portfolio-history views.
+  for (const key of [
+    keys.accounts,
+    keys.accountLots,
+    keys.holdings,
+    keys.summary,
+    keys.harvest,
+    keys.retirement,
+    keys.portfolioHistory,
+  ]) {
+    qc.invalidateQueries({ queryKey: key });
+  }
   // A sync re-evaluates alerts server-side, so refetch the list too.
   qc.invalidateQueries({ queryKey: ["alerts"] });
+}
+
+/** Re-pull holdings + transactions for every connected item and rebuild tax
+ *  lots (POST /api/plaid/resync). This is the on-demand equivalent of the
+ *  scheduled background sync — the only user action that refreshes data
+ *  straight from the brokerage (and so updates each account's last-synced
+ *  time). Refresh everything the sync touches on success. */
+export function useResync() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => post<ResyncResponse>("/api/plaid/resync"),
+    onSuccess: () => invalidateAfterSync(qc),
+  });
 }
 
 /** Fetch a Plaid Link token (only when `enabled`). Link tokens are short-lived

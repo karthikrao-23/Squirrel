@@ -255,3 +255,12 @@ export interface ConnectResponse {
   item_id: string;
   summary: Record<string, unknown>;
 }
+
+// POST /api/plaid/resync → re-pulls holdings + transactions for every connected
+// item and rebuilds tax lots. Counts are totals across all of the user's items.
+export interface ResyncResponse {
+  items: number;
+  accounts: number;
+  holdings: number;
+  transactions_inserted: number;
+}
